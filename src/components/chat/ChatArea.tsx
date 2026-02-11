@@ -1,36 +1,39 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useChatContext } from "@/context/ChatContext";
-import { mockUsers, mockChannels } from "@/data/mockData";
 import { Hash, Bell, Pin, Users, Search, Inbox, HelpCircle, PlusCircle, Gift, Smile, SendHorizonal } from "lucide-react";
 import { format, isToday, isYesterday } from "date-fns";
 
 const ChatArea = () => {
-  const { activeChannelId, activeServerId, getMessages, sendMessage } = useChatContext();
+  const { activeChannelId, channels, messages, sendMessage, members } = useChatContext();
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const messages = getMessages();
 
-  const channel = (mockChannels[activeServerId] || []).find((c) => c.id === activeChannelId);
+  const channel = channels.find((c) => c.id === activeChannelId);
+
+  // Build a map of user_id -> profile for efficient lookup
+  const memberMap = useMemo(() => {
+    const map: Record<string, typeof members[0]> = {};
+    members.forEach((m) => { map[m.id] = m; });
+    return map;
+  }, [members]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const trimmed = input.trim();
     if (!trimmed) return;
-    sendMessage(trimmed);
     setInput("");
+    await sendMessage(trimmed);
   };
 
-  const formatTimestamp = (ts: number) => {
+  const formatTimestamp = (ts: string) => {
     const date = new Date(ts);
     if (isToday(date)) return `Today at ${format(date, "h:mm a")}`;
     if (isYesterday(date)) return `Yesterday at ${format(date, "h:mm a")}`;
     return format(date, "MM/dd/yyyy h:mm a");
   };
-
-  const getUserById = (id: string) => mockUsers.find((u) => u.id === id);
 
   return (
     <div className="flex flex-col flex-1 min-w-0 bg-chat-area">
@@ -51,7 +54,14 @@ const ChatArea = () => {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
-        {messages.length === 0 && (
+        {!activeChannelId && (
+          <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+            <Hash className="w-16 h-16 mb-4 opacity-30" />
+            <p className="text-lg font-semibold text-foreground">Select a channel</p>
+            <p className="text-sm">Pick a channel to start chatting</p>
+          </div>
+        )}
+        {activeChannelId && messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
             <Hash className="w-16 h-16 mb-4 opacity-30" />
             <p className="text-lg font-semibold text-foreground">Welcome to #{channel?.name}!</p>
@@ -59,15 +69,19 @@ const ChatArea = () => {
           </div>
         )}
         {messages.map((msg, i) => {
-          const user = getUserById(msg.userId);
+          const user = memberMap[msg.user_id];
           const prevMsg = messages[i - 1];
-          const isGrouped = prevMsg?.userId === msg.userId && msg.timestamp - prevMsg.timestamp < 300000;
+          const isGrouped = prevMsg?.user_id === msg.user_id &&
+            new Date(msg.created_at).getTime() - new Date(prevMsg.created_at).getTime() < 300000;
+
+          const displayName = user?.display_name || "Unknown";
+          const initials = displayName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
 
           if (isGrouped) {
             return (
-              <div key={msg.id} className="pl-[52px] py-0.5 hover:bg-chat-hover rounded group">
+              <div key={msg.id} className="pl-[52px] py-0.5 hover:bg-chat-hover rounded group relative">
                 <span className="text-[11px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity absolute -ml-[38px] mt-0.5">
-                  {format(new Date(msg.timestamp), "h:mm a")}
+                  {format(new Date(msg.created_at), "h:mm a")}
                 </span>
                 <p className="text-sm text-foreground">{msg.content}</p>
               </div>
@@ -77,17 +91,17 @@ const ChatArea = () => {
           return (
             <div key={msg.id} className={`flex gap-3 py-1 hover:bg-chat-hover rounded px-1 group ${i > 0 ? "mt-3" : ""}`}>
               <div
-                className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 mt-0.5"
-                style={{ backgroundColor: `hsl(${(user?.id.charCodeAt(1) || 0) * 60}, 50%, 40%)` }}
+                className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 mt-0.5 text-foreground"
+                style={{ backgroundColor: `hsl(${(msg.user_id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}
               >
-                <span className="text-foreground">{user?.avatar}</span>
+                {initials}
               </div>
               <div className="min-w-0">
                 <div className="flex items-baseline gap-2">
                   <span className="text-sm font-semibold text-foreground hover:underline cursor-pointer">
-                    {user?.displayName}
+                    {displayName}
                   </span>
-                  <span className="text-[11px] text-muted-foreground">{formatTimestamp(msg.timestamp)}</span>
+                  <span className="text-[11px] text-muted-foreground">{formatTimestamp(msg.created_at)}</span>
                 </div>
                 <p className="text-sm text-foreground">{msg.content}</p>
               </div>
@@ -98,35 +112,37 @@ const ChatArea = () => {
       </div>
 
       {/* Input */}
-      <div className="px-4 pb-6 pt-1">
-        <div className="flex items-center gap-2 bg-chat-input rounded-lg px-4 py-2.5">
-          <button className="text-muted-foreground hover:text-foreground transition-colors shrink-0">
-            <PlusCircle className="w-5 h-5" />
-          </button>
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            placeholder={`Message #${channel?.name || "general"}`}
-            className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
-          />
-          <div className="flex items-center gap-2 shrink-0">
-            <button className="text-muted-foreground hover:text-foreground transition-colors">
-              <Gift className="w-5 h-5" />
+      {activeChannelId && (
+        <div className="px-4 pb-6 pt-1">
+          <div className="flex items-center gap-2 bg-chat-input rounded-lg px-4 py-2.5">
+            <button className="text-muted-foreground hover:text-foreground transition-colors shrink-0">
+              <PlusCircle className="w-5 h-5" />
             </button>
-            <button className="text-muted-foreground hover:text-foreground transition-colors">
-              <Smile className="w-5 h-5" />
-            </button>
-            <button
-              onClick={handleSend}
-              disabled={!input.trim()}
-              className="text-muted-foreground hover:text-primary disabled:opacity-30 transition-colors"
-            >
-              <SendHorizonal className="w-5 h-5" />
-            </button>
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSend()}
+              placeholder={`Message #${channel?.name || "general"}`}
+              className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
+            />
+            <div className="flex items-center gap-2 shrink-0">
+              <button className="text-muted-foreground hover:text-foreground transition-colors">
+                <Gift className="w-5 h-5" />
+              </button>
+              <button className="text-muted-foreground hover:text-foreground transition-colors">
+                <Smile className="w-5 h-5" />
+              </button>
+              <button
+                onClick={handleSend}
+                disabled={!input.trim()}
+                className="text-muted-foreground hover:text-primary disabled:opacity-30 transition-colors"
+              >
+                <SendHorizonal className="w-5 h-5" />
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
