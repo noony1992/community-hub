@@ -1,10 +1,15 @@
+import { useState } from "react";
 import { useChatContext } from "@/context/ChatContext";
-import { Hash, Volume2, ChevronDown, Settings, Mic, Headphones } from "lucide-react";
+import { Hash, Volume2, ChevronDown, Settings, Mic, Headphones, Plus, UserPlus } from "lucide-react";
 import StatusIndicator from "./StatusIndicator";
+import CreateChannelDialog from "./CreateChannelDialog";
+import InviteDialog from "./InviteDialog";
 
 const ChannelSidebar = () => {
   const { activeServerId, activeChannelId, setActiveChannel, channels, servers, profile } = useChatContext();
   const server = servers.find((s) => s.id === activeServerId);
+  const [showCreateChannel, setShowCreateChannel] = useState(false);
+  const [showInvite, setShowInvite] = useState(false);
 
   const textChannels = channels.filter((c) => c.type === "text");
   const voiceChannels = channels.filter((c) => c.type === "voice");
@@ -17,12 +22,32 @@ const ChannelSidebar = () => {
       </button>
 
       <div className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
+        {/* Invite button */}
+        {activeServerId && (
+          <button
+            onClick={() => setShowInvite(true)}
+            className="flex items-center gap-2 w-full px-2 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-chat-hover transition-colors"
+          >
+            <UserPlus className="w-4 h-4" />
+            <span>Invite People</span>
+          </button>
+        )}
+
         {textChannels.length > 0 && (
           <div>
-            <button className="flex items-center gap-1 px-1 mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors w-full">
-              <ChevronDown className="w-3 h-3" />
-              Text Channels
-            </button>
+            <div className="flex items-center justify-between px-1 mb-1">
+              <button className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors">
+                <ChevronDown className="w-3 h-3" />
+                Text Channels
+              </button>
+              <button
+                onClick={() => setShowCreateChannel(true)}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+                title="Create Channel"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
             {textChannels.map((ch) => {
               const isActive = ch.id === activeChannelId;
               return (
@@ -45,10 +70,19 @@ const ChannelSidebar = () => {
 
         {voiceChannels.length > 0 && (
           <div>
-            <button className="flex items-center gap-1 px-1 mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors w-full">
-              <ChevronDown className="w-3 h-3" />
-              Voice Channels
-            </button>
+            <div className="flex items-center justify-between px-1 mb-1">
+              <button className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors">
+                <ChevronDown className="w-3 h-3" />
+                Voice Channels
+              </button>
+              <button
+                onClick={() => setShowCreateChannel(true)}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+                title="Create Channel"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
             {voiceChannels.map((ch) => (
               <button
                 key={ch.id}
@@ -61,8 +95,16 @@ const ChannelSidebar = () => {
           </div>
         )}
 
-        {channels.length === 0 && (
-          <p className="text-sm text-muted-foreground px-2">No channels yet</p>
+        {channels.length === 0 && activeServerId && (
+          <div className="px-2">
+            <p className="text-sm text-muted-foreground mb-2">No channels yet</p>
+            <button
+              onClick={() => setShowCreateChannel(true)}
+              className="flex items-center gap-1.5 text-sm text-primary hover:underline"
+            >
+              <Plus className="w-4 h-4" /> Create a channel
+            </button>
+          </div>
         )}
       </div>
 
@@ -90,6 +132,9 @@ const ChannelSidebar = () => {
           </button>
         </div>
       </div>
+
+      <CreateChannelDialog open={showCreateChannel} onClose={() => setShowCreateChannel(false)} />
+      <InviteDialog open={showInvite} onClose={() => setShowInvite(false)} />
     </div>
   );
 };

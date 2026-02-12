@@ -1,8 +1,10 @@
 import { useChatContext } from "@/context/ChatContext";
+import { useDMContext } from "@/context/DMContext";
 import StatusIndicator from "./StatusIndicator";
 
 const MemberSidebar = () => {
   const { members } = useChatContext();
+  const { startConversation } = useDMContext();
 
   const online = members.filter((u) => u.status !== "offline");
   const offline = members.filter((u) => u.status === "offline");
@@ -10,7 +12,11 @@ const MemberSidebar = () => {
   const MemberItem = ({ user }: { user: typeof members[0] }) => {
     const initials = user.display_name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
     return (
-      <button className="flex items-center gap-3 w-full px-2 py-1.5 rounded-md hover:bg-chat-hover transition-colors group">
+      <button
+        onClick={() => startConversation(user.id)}
+        className="flex items-center gap-3 w-full px-2 py-1.5 rounded-md hover:bg-chat-hover transition-colors group"
+        title={`Message ${user.display_name}`}
+      >
         <div className="relative shrink-0">
           <div
             className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-foreground ${
