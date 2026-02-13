@@ -11,7 +11,7 @@ interface JoinServerDialogProps {
 
 const JoinServerDialog = ({ open, onClose }: JoinServerDialogProps) => {
   const { user } = useAuth();
-  const { setActiveServer } = useChatContext();
+  const { setActiveServer, refreshServers } = useChatContext();
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -21,12 +21,11 @@ const JoinServerDialog = ({ open, onClose }: JoinServerDialogProps) => {
     setError("");
     setLoading(true);
 
-    // Look up invite code
     const { data: invite } = await supabase
       .from("invite_codes")
       .select("server_id, max_uses, uses")
       .eq("code", code.trim())
-      .single();
+      .maybeSingle();
 
     if (!invite) {
       setError("Invalid invite code");
@@ -40,7 +39,6 @@ const JoinServerDialog = ({ open, onClose }: JoinServerDialogProps) => {
       return;
     }
 
-    // Check if already a member
     const { data: existing } = await supabase
       .from("server_members")
       .select("id")
@@ -55,24 +53,21 @@ const JoinServerDialog = ({ open, onClose }: JoinServerDialogProps) => {
       return;
     }
 
-    // Join server
     await supabase.from("server_members").insert({
       server_id: invite.server_id,
       user_id: user.id,
     });
 
-    // Increment uses
     await supabase
       .from("invite_codes")
       .update({ uses: invite.uses + 1 })
       .eq("code", code.trim());
 
+    await refreshServers();
     setActiveServer(invite.server_id);
     setCode("");
     onClose();
     setLoading(false);
-    // Reload page to refresh server list
-    window.location.reload();
   };
 
   if (!open) return null;
@@ -89,9 +84,7 @@ const JoinServerDialog = ({ open, onClose }: JoinServerDialogProps) => {
             <X className="w-5 h-5" />
           </button>
         </div>
-
         <p className="text-sm text-muted-foreground mb-4">Enter an invite code to join a server.</p>
-
         <input
           value={code}
           onChange={(e) => setCode(e.target.value)}
@@ -100,9 +93,7 @@ const JoinServerDialog = ({ open, onClose }: JoinServerDialogProps) => {
           className="w-full px-3 py-2.5 rounded-md bg-background text-foreground border border-border text-sm outline-none focus:ring-2 focus:ring-primary/50 mb-3 font-mono"
           autoFocus
         />
-
         {error && <p className="text-sm text-destructive mb-3">{error}</p>}
-
         <button
           onClick={handleJoin}
           disabled={loading || !code.trim()}
