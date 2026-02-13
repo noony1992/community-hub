@@ -1,16 +1,20 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useChatContext } from "@/context/ChatContext";
-import { Hash, Bell, Pin, Users, Search, Inbox, HelpCircle, PlusCircle, Gift, Smile, SendHorizonal } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
+import { Hash, Bell, Pin, Users, Search, Inbox, HelpCircle, PlusCircle, Gift, Smile, SendHorizonal, Pencil, Trash2, X, Check } from "lucide-react";
 import { format, isToday, isYesterday } from "date-fns";
 
 const ChatArea = () => {
-  const { activeChannelId, channels, messages, sendMessage, members } = useChatContext();
+  const { user } = useAuth();
+  const { activeChannelId, channels, messages, sendMessage, editMessage, deleteMessage, members, typingUsers, setTyping } = useChatContext();
   const [input, setInput] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editContent, setEditContent] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const channel = channels.find((c) => c.id === activeChannelId);
 
-  // Build a map of user_id -> profile for efficient lookup
   const memberMap = useMemo(() => {
     const map: Record<string, typeof members[0]> = {};
     members.forEach((m) => { map[m.id] = m; });
@@ -21,11 +25,26 @@ const ChatArea = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length]);
 
+  const handleTyping = useCallback(() => {
+    setTyping(true);
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => setTyping(false), 2000);
+  }, [setTyping]);
+
   const handleSend = async () => {
     const trimmed = input.trim();
     if (!trimmed) return;
     setInput("");
+    setTyping(false);
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     await sendMessage(trimmed);
+  };
+
+  const handleEdit = async () => {
+    if (!editingId || !editContent.trim()) return;
+    await editMessage(editingId, editContent.trim());
+    setEditingId(null);
+    setEditContent("");
   };
 
   const formatTimestamp = (ts: string) => {
@@ -69,12 +88,14 @@ const ChatArea = () => {
           </div>
         )}
         {messages.map((msg, i) => {
-          const user = memberMap[msg.user_id];
+          const msgUser = memberMap[msg.user_id];
           const prevMsg = messages[i - 1];
           const isGrouped = prevMsg?.user_id === msg.user_id &&
             new Date(msg.created_at).getTime() - new Date(prevMsg.created_at).getTime() < 300000;
+          const isOwn = msg.user_id === user?.id;
+          const isEditing = editingId === msg.id;
 
-          const displayName = user?.display_name || "Unknown";
+          const displayName = msgUser?.display_name || "Unknown";
           const initials = displayName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
 
           if (isGrouped) {
@@ -83,7 +104,24 @@ const ChatArea = () => {
                 <span className="text-[11px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity absolute -ml-[38px] mt-0.5">
                   {format(new Date(msg.created_at), "h:mm a")}
                 </span>
-                <p className="text-sm text-foreground">{msg.content}</p>
+                {isEditing ? (
+                  <div className="flex items-center gap-2">
+                    <input value={editContent} onChange={(e) => setEditContent(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") handleEdit(); if (e.key === "Escape") setEditingId(null); }} className="flex-1 bg-chat-input text-sm text-foreground px-2 py-1 rounded outline-none" autoFocus />
+                    <button onClick={handleEdit} className="text-status-online"><Check className="w-4 h-4" /></button>
+                    <button onClick={() => setEditingId(null)} className="text-muted-foreground"><X className="w-4 h-4" /></button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1">
+                    <p className="text-sm text-foreground">{msg.content}</p>
+                    {msg.edited_at && <span className="text-[10px] text-muted-foreground">(edited)</span>}
+                    {isOwn && (
+                      <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 ml-2">
+                        <button onClick={() => { setEditingId(msg.id); setEditContent(msg.content); }} className="p-0.5 text-muted-foreground hover:text-foreground"><Pencil className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => deleteMessage(msg.id)} className="p-0.5 text-muted-foreground hover:text-destructive"><Trash2 className="w-3.5 h-3.5" /></button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           }
@@ -96,20 +134,45 @@ const ChatArea = () => {
               >
                 {initials}
               </div>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="flex items-baseline gap-2">
-                  <span className="text-sm font-semibold text-foreground hover:underline cursor-pointer">
-                    {displayName}
-                  </span>
+                  <span className="text-sm font-semibold text-foreground hover:underline cursor-pointer">{displayName}</span>
                   <span className="text-[11px] text-muted-foreground">{formatTimestamp(msg.created_at)}</span>
                 </div>
-                <p className="text-sm text-foreground">{msg.content}</p>
+                {isEditing ? (
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <input value={editContent} onChange={(e) => setEditContent(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") handleEdit(); if (e.key === "Escape") setEditingId(null); }} className="flex-1 bg-chat-input text-sm text-foreground px-2 py-1 rounded outline-none" autoFocus />
+                    <button onClick={handleEdit} className="text-status-online"><Check className="w-4 h-4" /></button>
+                    <button onClick={() => setEditingId(null)} className="text-muted-foreground"><X className="w-4 h-4" /></button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1">
+                    <p className="text-sm text-foreground">{msg.content}</p>
+                    {msg.edited_at && <span className="text-[10px] text-muted-foreground">(edited)</span>}
+                    {isOwn && (
+                      <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 ml-2">
+                        <button onClick={() => { setEditingId(msg.id); setEditContent(msg.content); }} className="p-0.5 text-muted-foreground hover:text-foreground"><Pencil className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => deleteMessage(msg.id)} className="p-0.5 text-muted-foreground hover:text-destructive"><Trash2 className="w-3.5 h-3.5" /></button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           );
         })}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Typing indicator */}
+      {typingUsers.length > 0 && (
+        <div className="px-4 py-1">
+          <p className="text-xs text-muted-foreground animate-pulse-subtle">
+            <span className="font-semibold text-foreground">{typingUsers.map(u => u.display_name).join(", ")}</span>
+            {typingUsers.length === 1 ? " is typing..." : " are typing..."}
+          </p>
+        </div>
+      )}
 
       {/* Input */}
       {activeChannelId && (
@@ -120,23 +183,15 @@ const ChatArea = () => {
             </button>
             <input
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => { setInput(e.target.value); handleTyping(); }}
               onKeyDown={(e) => e.key === "Enter" && handleSend()}
               placeholder={`Message #${channel?.name || "general"}`}
               className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
             />
             <div className="flex items-center gap-2 shrink-0">
-              <button className="text-muted-foreground hover:text-foreground transition-colors">
-                <Gift className="w-5 h-5" />
-              </button>
-              <button className="text-muted-foreground hover:text-foreground transition-colors">
-                <Smile className="w-5 h-5" />
-              </button>
-              <button
-                onClick={handleSend}
-                disabled={!input.trim()}
-                className="text-muted-foreground hover:text-primary disabled:opacity-30 transition-colors"
-              >
+              <button className="text-muted-foreground hover:text-foreground transition-colors"><Gift className="w-5 h-5" /></button>
+              <button className="text-muted-foreground hover:text-foreground transition-colors"><Smile className="w-5 h-5" /></button>
+              <button onClick={handleSend} disabled={!input.trim()} className="text-muted-foreground hover:text-primary disabled:opacity-30 transition-colors">
                 <SendHorizonal className="w-5 h-5" />
               </button>
             </div>
