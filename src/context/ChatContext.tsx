@@ -25,13 +25,24 @@ interface Channel {
   type: string;
 }
 
-interface Message {
+export interface Message {
   id: string;
   channel_id: string;
   user_id: string;
   content: string;
   created_at: string;
   edited_at: string | null;
+  attachment_url: string | null;
+  attachment_name: string | null;
+  attachment_type: string | null;
+}
+
+export interface Reaction {
+  id: string;
+  message_id: string;
+  user_id: string;
+  emoji: string;
+  created_at: string;
 }
 
 interface ChatState {
@@ -42,15 +53,19 @@ interface ChatState {
   messages: Message[];
   members: Profile[];
   profile: Profile | null;
+  reactions: Record<string, Reaction[]>;
   setActiveServer: (id: string) => void;
   setActiveChannel: (id: string) => void;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, attachment?: { url: string; name: string; type: string }) => Promise<void>;
   editMessage: (id: string, content: string) => Promise<void>;
   deleteMessage: (id: string) => Promise<void>;
   createServer: (name: string, icon: string) => Promise<void>;
   refreshServers: () => Promise<void>;
   refreshChannels: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  addReaction: (messageId: string, emoji: string) => Promise<void>;
+  removeReaction: (messageId: string, emoji: string) => Promise<void>;
+  searchMessages: (query: string) => Promise<{ message: Message; channel_name: string; server_name: string }[]>;
   loadingServers: boolean;
   typingUsers: Profile[];
   setTyping: (isTyping: boolean) => void;
@@ -75,6 +90,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loadingServers, setLoadingServers] = useState(true);
   const [typingUsers, setTypingUsers] = useState<Profile[]>([]);
+  const [reactions, setReactions] = useState<Record<string, Reaction[]>>({});
 
   const loadProfile = useCallback(async () => {
     if (!user) return;
@@ -122,7 +138,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setChannels(channelList);
   }, [activeServerId]);
 
-  // Load channels when server changes
   useEffect(() => {
     if (!activeServerId) return;
     const loadChannels = async () => {
@@ -157,9 +172,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loadMembers();
   }, [activeServerId]);
 
-  // Load messages + realtime when channel changes
+  // Load messages + reactions + realtime when channel changes
   useEffect(() => {
-    if (!activeChannelId) { setMessages([]); return; }
+    if (!activeChannelId) { setMessages([]); setReactions({}); return; }
 
     const loadMessages = async () => {
       const { data } = await supabase
@@ -168,7 +183,23 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .eq("channel_id", activeChannelId)
         .order("created_at", { ascending: true })
         .limit(100);
-      setMessages((data || []) as Message[]);
+      const msgs = (data || []) as Message[];
+      setMessages(msgs);
+
+      // Load reactions for these messages
+      if (msgs.length > 0) {
+        const msgIds = msgs.map(m => m.id);
+        const { data: rxns } = await supabase
+          .from("reactions")
+          .select("*")
+          .in("message_id", msgIds);
+        const grouped: Record<string, Reaction[]> = {};
+        (rxns || []).forEach((r: any) => {
+          if (!grouped[r.message_id]) grouped[r.message_id] = [];
+          grouped[r.message_id].push(r as Reaction);
+        });
+        setReactions(grouped);
+      }
     };
     loadMessages();
 
@@ -195,7 +226,33 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       )
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    // Reactions realtime
+    const rxnChannel = supabase
+      .channel(`reactions:${activeChannelId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "reactions" },
+        () => {
+          // Reload reactions on any change
+          const msgIds = messages.map(m => m.id);
+          if (msgIds.length > 0) {
+            supabase.from("reactions").select("*").in("message_id", msgIds).then(({ data }) => {
+              const grouped: Record<string, Reaction[]> = {};
+              (data || []).forEach((r: any) => {
+                if (!grouped[r.message_id]) grouped[r.message_id] = [];
+                grouped[r.message_id].push(r as Reaction);
+              });
+              setReactions(grouped);
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+      supabase.removeChannel(rxnChannel);
+    };
   }, [activeChannelId]);
 
   // Typing indicator via presence
@@ -233,12 +290,15 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setActiveServerId(id);
   }, []);
 
-  const sendMessage = useCallback(async (content: string) => {
+  const sendMessage = useCallback(async (content: string, attachment?: { url: string; name: string; type: string }) => {
     if (!user || !activeChannelId) return;
     await supabase.from("messages").insert({
       channel_id: activeChannelId,
       user_id: user.id,
       content,
+      attachment_url: attachment?.url || null,
+      attachment_name: attachment?.name || null,
+      attachment_type: attachment?.type || null,
     });
   }, [user, activeChannelId]);
 
@@ -251,6 +311,54 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!user) return;
     await supabase.from("messages").delete().eq("id", id);
   }, [user]);
+
+  const addReaction = useCallback(async (messageId: string, emoji: string) => {
+    if (!user) return;
+    await supabase.from("reactions").insert({ message_id: messageId, user_id: user.id, emoji });
+    // Optimistic update
+    setReactions(prev => {
+      const existing = prev[messageId] || [];
+      return { ...prev, [messageId]: [...existing, { id: crypto.randomUUID(), message_id: messageId, user_id: user.id, emoji, created_at: new Date().toISOString() }] };
+    });
+  }, [user]);
+
+  const removeReaction = useCallback(async (messageId: string, emoji: string) => {
+    if (!user) return;
+    await supabase.from("reactions").delete().eq("message_id", messageId).eq("user_id", user.id).eq("emoji", emoji);
+    setReactions(prev => {
+      const existing = prev[messageId] || [];
+      return { ...prev, [messageId]: existing.filter(r => !(r.user_id === user.id && r.emoji === emoji)) };
+    });
+  }, [user]);
+
+  const searchMessages = useCallback(async (query: string) => {
+    if (!query.trim()) return [];
+    const { data } = await supabase
+      .from("messages")
+      .select("*")
+      .ilike("content", `%${query}%`)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    
+    if (!data || data.length === 0) return [];
+
+    // Get channel info for results
+    const channelIds = [...new Set((data as Message[]).map(m => m.channel_id))];
+    const { data: chData } = await supabase.from("channels").select("*").in("id", channelIds);
+    const chMap: Record<string, any> = {};
+    (chData || []).forEach((c: any) => { chMap[c.id] = c; });
+
+    const serverIds = [...new Set(Object.values(chMap).map((c: any) => c.server_id))];
+    const { data: srvData } = await supabase.from("servers").select("*").in("id", serverIds);
+    const srvMap: Record<string, any> = {};
+    (srvData || []).forEach((s: any) => { srvMap[s.id] = s; });
+
+    return (data as Message[]).map(msg => ({
+      message: msg,
+      channel_name: chMap[msg.channel_id]?.name || "unknown",
+      server_name: srvMap[chMap[msg.channel_id]?.server_id]?.name || "unknown",
+    }));
+  }, []);
 
   const createServer = useCallback(async (name: string, icon: string) => {
     if (!user) return;
@@ -286,6 +394,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         messages,
         members,
         profile,
+        reactions,
         setActiveServer,
         setActiveChannel: setActiveChannelId,
         sendMessage,
@@ -295,6 +404,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         refreshServers,
         refreshChannels,
         refreshProfile: loadProfile,
+        addReaction,
+        removeReaction,
+        searchMessages,
         loadingServers,
         typingUsers,
         setTyping,
