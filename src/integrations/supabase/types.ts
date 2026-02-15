@@ -173,6 +173,9 @@ export type Database = {
           created_at: string
           edited_at: string | null
           id: string
+          pinned_at: string | null
+          pinned_by: string | null
+          reply_to: string | null
           user_id: string
         }
         Insert: {
@@ -184,6 +187,9 @@ export type Database = {
           created_at?: string
           edited_at?: string | null
           id?: string
+          pinned_at?: string | null
+          pinned_by?: string | null
+          reply_to?: string | null
           user_id: string
         }
         Update: {
@@ -195,6 +201,9 @@ export type Database = {
           created_at?: string
           edited_at?: string | null
           id?: string
+          pinned_at?: string | null
+          pinned_by?: string | null
+          reply_to?: string | null
           user_id?: string
         }
         Relationships: [
@@ -203,6 +212,13 @@ export type Database = {
             columns: ["channel_id"]
             isOneToOne: false
             referencedRelation: "channels"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_reply_to_fkey"
+            columns: ["reply_to"]
+            isOneToOne: false
+            referencedRelation: "messages"
             referencedColumns: ["id"]
           },
           {

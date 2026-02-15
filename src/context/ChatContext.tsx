@@ -35,6 +35,9 @@ export interface Message {
   attachment_url: string | null;
   attachment_name: string | null;
   attachment_type: string | null;
+  pinned_at: string | null;
+  pinned_by: string | null;
+  reply_to: string | null;
 }
 
 export interface Reaction {
@@ -56,7 +59,7 @@ interface ChatState {
   reactions: Record<string, Reaction[]>;
   setActiveServer: (id: string) => void;
   setActiveChannel: (id: string) => void;
-  sendMessage: (content: string, attachment?: { url: string; name: string; type: string }) => Promise<void>;
+  sendMessage: (content: string, attachment?: { url: string; name: string; type: string }, replyTo?: string) => Promise<void>;
   editMessage: (id: string, content: string) => Promise<void>;
   deleteMessage: (id: string) => Promise<void>;
   createServer: (name: string, icon: string) => Promise<void>;
@@ -66,6 +69,10 @@ interface ChatState {
   addReaction: (messageId: string, emoji: string) => Promise<void>;
   removeReaction: (messageId: string, emoji: string) => Promise<void>;
   searchMessages: (query: string) => Promise<{ message: Message; channel_name: string; server_name: string }[]>;
+  pinMessage: (messageId: string) => Promise<void>;
+  unpinMessage: (messageId: string) => Promise<void>;
+  getPinnedMessages: () => Promise<Message[]>;
+  getThreadReplies: (messageId: string) => Promise<Message[]>;
   loadingServers: boolean;
   typingUsers: Profile[];
   setTyping: (isTyping: boolean) => void;
@@ -94,11 +101,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loadProfile = useCallback(async () => {
     if (!user) return;
-    const { data } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .maybeSingle();
+    const { data } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
     if (data) setProfile(data as Profile);
   }, [user]);
 
@@ -108,8 +111,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!user) return;
     setLoadingServers(true);
     const { data } = await supabase.from("servers").select("*");
-    const serverList = (data || []) as Server[];
-    setServers(serverList);
+    setServers((data || []) as Server[]);
     setLoadingServers(false);
   }, [user]);
 
@@ -120,9 +122,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { data } = await supabase.from("servers").select("*");
       const serverList = (data || []) as Server[];
       setServers(serverList);
-      if (serverList.length > 0 && !activeServerId) {
-        setActiveServerId(serverList[0].id);
-      }
+      if (serverList.length > 0 && !activeServerId) setActiveServerId(serverList[0].id);
       setLoadingServers(false);
     };
     load();
@@ -130,21 +130,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshChannels = useCallback(async () => {
     if (!activeServerId) return;
-    const { data } = await supabase
-      .from("channels")
-      .select("*")
-      .eq("server_id", activeServerId);
-    const channelList = (data || []) as Channel[];
-    setChannels(channelList);
+    const { data } = await supabase.from("channels").select("*").eq("server_id", activeServerId);
+    setChannels((data || []) as Channel[]);
   }, [activeServerId]);
 
   useEffect(() => {
     if (!activeServerId) return;
     const loadChannels = async () => {
-      const { data } = await supabase
-        .from("channels")
-        .select("*")
-        .eq("server_id", activeServerId);
+      const { data } = await supabase.from("channels").select("*").eq("server_id", activeServerId);
       const channelList = (data || []) as Channel[];
       setChannels(channelList);
       const firstText = channelList.find((c) => c.type === "text");
@@ -154,16 +147,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loadChannels();
 
     const loadMembers = async () => {
-      const { data } = await supabase
-        .from("server_members")
-        .select("user_id")
-        .eq("server_id", activeServerId);
+      const { data } = await supabase.from("server_members").select("user_id").eq("server_id", activeServerId);
       if (data && data.length > 0) {
         const userIds = data.map((m: any) => m.user_id);
-        const { data: profiles } = await supabase
-          .from("profiles")
-          .select("*")
-          .in("id", userIds);
+        const { data: profiles } = await supabase.from("profiles").select("*").in("id", userIds);
         setMembers((profiles || []) as Profile[]);
       } else {
         setMembers([]);
@@ -172,27 +159,22 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loadMembers();
   }, [activeServerId]);
 
-  // Load messages + reactions + realtime when channel changes
+  // Load messages + reactions + realtime
   useEffect(() => {
     if (!activeChannelId) { setMessages([]); setReactions({}); return; }
 
     const loadMessages = async () => {
       const { data } = await supabase
-        .from("messages")
-        .select("*")
+        .from("messages").select("*")
         .eq("channel_id", activeChannelId)
         .order("created_at", { ascending: true })
         .limit(100);
       const msgs = (data || []) as Message[];
       setMessages(msgs);
 
-      // Load reactions for these messages
       if (msgs.length > 0) {
         const msgIds = msgs.map(m => m.id);
-        const { data: rxns } = await supabase
-          .from("reactions")
-          .select("*")
-          .in("message_id", msgIds);
+        const { data: rxns } = await supabase.from("reactions").select("*").in("message_id", msgIds);
         const grouped: Record<string, Reaction[]> = {};
         (rxns || []).forEach((r: any) => {
           if (!grouped[r.message_id]) grouped[r.message_id] = [];
@@ -205,48 +187,29 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const channel = supabase
       .channel(`messages:${activeChannelId}`)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "messages", filter: `channel_id=eq.${activeChannelId}` },
-        (payload) => { setMessages((prev) => [...prev, payload.new as Message]); }
-      )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "messages", filter: `channel_id=eq.${activeChannelId}` },
-        (payload) => {
-          setMessages((prev) => prev.map((m) => m.id === payload.new.id ? (payload.new as Message) : m));
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "messages", filter: `channel_id=eq.${activeChannelId}` },
-        (payload) => {
-          setMessages((prev) => prev.filter((m) => m.id !== payload.old.id));
-        }
-      )
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `channel_id=eq.${activeChannelId}` },
+        (payload) => { setMessages((prev) => [...prev, payload.new as Message]); })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "messages", filter: `channel_id=eq.${activeChannelId}` },
+        (payload) => { setMessages((prev) => prev.map((m) => m.id === payload.new.id ? (payload.new as Message) : m)); })
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "messages", filter: `channel_id=eq.${activeChannelId}` },
+        (payload) => { setMessages((prev) => prev.filter((m) => m.id !== payload.old.id)); })
       .subscribe();
 
-    // Reactions realtime
     const rxnChannel = supabase
       .channel(`reactions:${activeChannelId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "reactions" },
-        () => {
-          // Reload reactions on any change
-          const msgIds = messages.map(m => m.id);
-          if (msgIds.length > 0) {
-            supabase.from("reactions").select("*").in("message_id", msgIds).then(({ data }) => {
-              const grouped: Record<string, Reaction[]> = {};
-              (data || []).forEach((r: any) => {
-                if (!grouped[r.message_id]) grouped[r.message_id] = [];
-                grouped[r.message_id].push(r as Reaction);
-              });
-              setReactions(grouped);
+      .on("postgres_changes", { event: "*", schema: "public", table: "reactions" }, () => {
+        const msgIds = messages.map(m => m.id);
+        if (msgIds.length > 0) {
+          supabase.from("reactions").select("*").in("message_id", msgIds).then(({ data }) => {
+            const grouped: Record<string, Reaction[]> = {};
+            (data || []).forEach((r: any) => {
+              if (!grouped[r.message_id]) grouped[r.message_id] = [];
+              grouped[r.message_id].push(r as Reaction);
             });
-          }
+            setReactions(grouped);
+          });
         }
-      )
+      })
       .subscribe();
 
     return () => {
@@ -255,14 +218,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [activeChannelId]);
 
-  // Typing indicator via presence
+  // Typing indicator
   useEffect(() => {
     if (!activeChannelId || !user || !profile) { setTypingUsers([]); return; }
-
-    const channel = supabase.channel(`typing:${activeChannelId}`, {
-      config: { presence: { key: user.id } },
-    });
-
+    const channel = supabase.channel(`typing:${activeChannelId}`, { config: { presence: { key: user.id } } });
     channel.on("presence", { event: "sync" }, () => {
       const state = channel.presenceState();
       const typing: Profile[] = [];
@@ -274,9 +233,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       setTypingUsers(typing);
     });
-
     channel.subscribe();
-
     return () => { supabase.removeChannel(channel); };
   }, [activeChannelId, user, profile, members]);
 
@@ -286,11 +243,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     channel.track({ typing: isTyping });
   }, [activeChannelId, user]);
 
-  const setActiveServer = useCallback((id: string) => {
-    setActiveServerId(id);
-  }, []);
+  const setActiveServer = useCallback((id: string) => { setActiveServerId(id); }, []);
 
-  const sendMessage = useCallback(async (content: string, attachment?: { url: string; name: string; type: string }) => {
+  const sendMessage = useCallback(async (content: string, attachment?: { url: string; name: string; type: string }, replyTo?: string) => {
     if (!user || !activeChannelId) return;
     await supabase.from("messages").insert({
       channel_id: activeChannelId,
@@ -299,6 +254,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       attachment_url: attachment?.url || null,
       attachment_name: attachment?.name || null,
       attachment_type: attachment?.type || null,
+      reply_to: replyTo || null,
     });
   }, [user, activeChannelId]);
 
@@ -312,10 +268,35 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await supabase.from("messages").delete().eq("id", id);
   }, [user]);
 
+  const pinMessage = useCallback(async (messageId: string) => {
+    if (!user) return;
+    await supabase.from("messages").update({ pinned_at: new Date().toISOString(), pinned_by: user.id }).eq("id", messageId);
+  }, [user]);
+
+  const unpinMessage = useCallback(async (messageId: string) => {
+    if (!user) return;
+    await supabase.from("messages").update({ pinned_at: null, pinned_by: null }).eq("id", messageId);
+  }, [user]);
+
+  const getPinnedMessages = useCallback(async () => {
+    if (!activeChannelId) return [];
+    const { data } = await supabase.from("messages").select("*")
+      .eq("channel_id", activeChannelId)
+      .not("pinned_at", "is", null)
+      .order("pinned_at", { ascending: false });
+    return (data || []) as Message[];
+  }, [activeChannelId]);
+
+  const getThreadReplies = useCallback(async (messageId: string) => {
+    const { data } = await supabase.from("messages").select("*")
+      .eq("reply_to", messageId)
+      .order("created_at", { ascending: true });
+    return (data || []) as Message[];
+  }, []);
+
   const addReaction = useCallback(async (messageId: string, emoji: string) => {
     if (!user) return;
     await supabase.from("reactions").insert({ message_id: messageId, user_id: user.id, emoji });
-    // Optimistic update
     setReactions(prev => {
       const existing = prev[messageId] || [];
       return { ...prev, [messageId]: [...existing, { id: crypto.randomUUID(), message_id: messageId, user_id: user.id, emoji, created_at: new Date().toISOString() }] };
@@ -333,26 +314,16 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const searchMessages = useCallback(async (query: string) => {
     if (!query.trim()) return [];
-    const { data } = await supabase
-      .from("messages")
-      .select("*")
-      .ilike("content", `%${query}%`)
-      .order("created_at", { ascending: false })
-      .limit(50);
-    
+    const { data } = await supabase.from("messages").select("*").ilike("content", `%${query}%`).order("created_at", { ascending: false }).limit(50);
     if (!data || data.length === 0) return [];
-
-    // Get channel info for results
     const channelIds = [...new Set((data as Message[]).map(m => m.channel_id))];
     const { data: chData } = await supabase.from("channels").select("*").in("id", channelIds);
     const chMap: Record<string, any> = {};
     (chData || []).forEach((c: any) => { chMap[c.id] = c; });
-
     const serverIds = [...new Set(Object.values(chMap).map((c: any) => c.server_id))];
     const { data: srvData } = await supabase.from("servers").select("*").in("id", serverIds);
     const srvMap: Record<string, any> = {};
     (srvData || []).forEach((s: any) => { srvMap[s.id] = s; });
-
     return (data as Message[]).map(msg => ({
       message: msg,
       channel_name: chMap[msg.channel_id]?.name || "unknown",
@@ -362,23 +333,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const createServer = useCallback(async (name: string, icon: string) => {
     if (!user) return;
-    const { data: server } = await supabase
-      .from("servers")
-      .insert({ name, icon, owner_id: user.id })
-      .select()
-      .single();
+    const { data: server } = await supabase.from("servers").insert({ name, icon, owner_id: user.id }).select().single();
     if (server) {
       const s = server as Server;
-      await supabase.from("server_members").insert({
-        user_id: user.id,
-        server_id: s.id,
-        role: "owner",
-      });
-      await supabase.from("channels").insert({
-        server_id: s.id,
-        name: "general",
-        type: "text",
-      });
+      await supabase.from("server_members").insert({ user_id: user.id, server_id: s.id, role: "owner" });
+      await supabase.from("channels").insert({ server_id: s.id, name: "general", type: "text" });
       setServers((prev) => [...prev, s]);
       setActiveServerId(s.id);
     }
@@ -387,29 +346,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   return (
     <ChatContext.Provider
       value={{
-        servers,
-        activeServerId,
-        activeChannelId,
-        channels,
-        messages,
-        members,
-        profile,
-        reactions,
-        setActiveServer,
-        setActiveChannel: setActiveChannelId,
-        sendMessage,
-        editMessage,
-        deleteMessage,
-        createServer,
-        refreshServers,
-        refreshChannels,
-        refreshProfile: loadProfile,
-        addReaction,
-        removeReaction,
-        searchMessages,
-        loadingServers,
-        typingUsers,
-        setTyping,
+        servers, activeServerId, activeChannelId, channels, messages, members, profile, reactions,
+        setActiveServer, setActiveChannel: setActiveChannelId, sendMessage, editMessage, deleteMessage,
+        createServer, refreshServers, refreshChannels, refreshProfile: loadProfile,
+        addReaction, removeReaction, searchMessages, pinMessage, unpinMessage, getPinnedMessages,
+        getThreadReplies, loadingServers, typingUsers, setTyping,
       }}
     >
       {children}
