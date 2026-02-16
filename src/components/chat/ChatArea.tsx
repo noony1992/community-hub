@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useChatContext, type Message } from "@/context/ChatContext";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { Hash, Bell, Pin, Users, Search, Inbox, HelpCircle, PlusCircle, Gift, Smile, SendHorizonal, Pencil, Trash2, X, Check, Paperclip, FileIcon, ImageIcon, MessageSquare, Reply } from "lucide-react";
+import { Hash, Pin, Users, Search, Inbox, HelpCircle, PlusCircle, Gift, Smile, SendHorizonal, Pencil, Trash2, X, Check, Paperclip, FileIcon, ImageIcon, MessageSquare, Reply } from "lucide-react";
 import { format, isToday, isYesterday } from "date-fns";
 import EmojiPicker from "./EmojiPicker";
 import MessageReactions from "./MessageReactions";
@@ -10,6 +10,8 @@ import SearchDialog from "./SearchDialog";
 import PinnedMessagesPanel from "./PinnedMessagesPanel";
 import ThreadPanel from "./ThreadPanel";
 import MentionAutocomplete, { renderContentWithMentions } from "./MentionAutocomplete";
+import NotificationBell from "./NotificationBell";
+import UserProfileCard from "./UserProfileCard";
 
 const ChatArea = () => {
   const { user } = useAuth();
@@ -25,6 +27,8 @@ const ChatArea = () => {
   const [threadMessage, setThreadMessage] = useState<Message | null>(null);
   const [mentionQuery, setMentionQuery] = useState("");
   const [showMentions, setShowMentions] = useState(false);
+  const [profileUser, setProfileUser] = useState<typeof members[0] | null>(null);
+  const [profilePos, setProfilePos] = useState<{ top: number; left: number } | undefined>();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -205,7 +209,7 @@ const ChatArea = () => {
             <span className="font-semibold text-foreground">{channel?.name || "general"}</span>
           </div>
           <div className="flex items-center gap-3">
-            <button className="text-muted-foreground hover:text-foreground transition-colors"><Bell className="w-5 h-5" /></button>
+            <NotificationBell />
             <button onClick={() => setShowPinned(true)} className="text-muted-foreground hover:text-foreground transition-colors" title="Pinned Messages"><Pin className="w-5 h-5" /></button>
             <button className="text-muted-foreground hover:text-foreground transition-colors"><Users className="w-5 h-5" /></button>
             <button onClick={() => setShowSearch(true)} className="text-muted-foreground hover:text-foreground transition-colors"><Search className="w-5 h-5" /></button>
@@ -279,7 +283,16 @@ const ChatArea = () => {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-2">
-                    <span className="text-sm font-semibold text-foreground hover:underline cursor-pointer">{displayName}</span>
+                    <span 
+                      className="text-sm font-semibold text-foreground hover:underline cursor-pointer"
+                      onClick={(e) => {
+                        if (msgUser) {
+                          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                          setProfilePos({ top: rect.bottom + 4, left: rect.left });
+                          setProfileUser(msgUser);
+                        }
+                      }}
+                    >{displayName}</span>
                     <span className="text-[11px] text-muted-foreground">{formatTimestamp(msg.created_at)}</span>
                     {msg.pinned_at && <Pin className="w-3 h-3 text-primary inline" />}
                   </div>
@@ -389,6 +402,14 @@ const ChatArea = () => {
       {/* Thread panel */}
       {threadMessage && (
         <ThreadPanel parentMessage={threadMessage} onClose={() => setThreadMessage(null)} members={memberMap} />
+      )}
+      {profileUser && (
+        <UserProfileCard
+          user={profileUser}
+          open={!!profileUser}
+          onClose={() => setProfileUser(null)}
+          position={profilePos}
+        />
       )}
     </div>
   );

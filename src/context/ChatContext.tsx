@@ -256,7 +256,25 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       attachment_type: attachment?.type || null,
       reply_to: replyTo || null,
     });
-  }, [user, activeChannelId]);
+
+    // Create notifications for @mentions
+    const mentionRegex = /@(\w+)/g;
+    let match;
+    while ((match = mentionRegex.exec(content)) !== null) {
+      const mentionedUser = members.find((m) => m.username === match![1]);
+      if (mentionedUser && mentionedUser.id !== user.id) {
+        const channel = channels.find((c) => c.id === activeChannelId);
+        await supabase.from("notifications").insert({
+          user_id: mentionedUser.id,
+          type: "mention",
+          title: `${profile?.display_name || "Someone"} mentioned you in #${channel?.name || "channel"}`,
+          body: content.slice(0, 100),
+          link_channel_id: activeChannelId,
+          link_server_id: activeServerId,
+        });
+      }
+    }
+  }, [user, activeChannelId, members, channels, profile, activeServerId]);
 
   const editMessage = useCallback(async (id: string, content: string) => {
     if (!user) return;
