@@ -1,21 +1,31 @@
+import { useState } from "react";
 import { useChatContext } from "@/context/ChatContext";
 import { useDMContext } from "@/context/DMContext";
 import StatusIndicator from "./StatusIndicator";
+import UserProfileCard from "./UserProfileCard";
 
 const MemberSidebar = () => {
   const { members } = useChatContext();
   const { startConversation } = useDMContext();
+  const [profileUser, setProfileUser] = useState<typeof members[0] | null>(null);
+  const [profilePos, setProfilePos] = useState<{ top: number; left: number } | undefined>();
 
   const online = members.filter((u) => u.status !== "offline");
   const offline = members.filter((u) => u.status === "offline");
+
+  const handleUserClick = (user: typeof members[0], e: React.MouseEvent) => {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setProfilePos({ top: rect.top, left: rect.left - 330 });
+    setProfileUser(user);
+  };
 
   const MemberItem = ({ user }: { user: typeof members[0] }) => {
     const initials = user.display_name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
     return (
       <button
-        onClick={() => startConversation(user.id)}
+        onClick={(e) => handleUserClick(user, e)}
         className="flex items-center gap-3 w-full px-2 py-1.5 rounded-md hover:bg-chat-hover transition-colors group"
-        title={`Message ${user.display_name}`}
+        title={`View ${user.display_name}'s profile`}
       >
         <div className="relative shrink-0">
           <div
@@ -62,6 +72,15 @@ const MemberSidebar = () => {
           <p className="text-sm text-muted-foreground px-2">No members</p>
         )}
       </div>
+
+      {profileUser && (
+        <UserProfileCard
+          user={profileUser}
+          open={!!profileUser}
+          onClose={() => setProfileUser(null)}
+          position={profilePos}
+        />
+      )}
     </div>
   );
 };

@@ -5,6 +5,7 @@ import StatusIndicator from "./StatusIndicator";
 import CreateChannelDialog from "./CreateChannelDialog";
 import InviteDialog from "./InviteDialog";
 import ProfileDialog from "./ProfileDialog";
+import ServerSettingsDialog from "./ServerSettingsDialog";
 
 const ChannelSidebar = () => {
   const { activeServerId, activeChannelId, setActiveChannel, channels, servers, profile } = useChatContext();
@@ -12,13 +13,14 @@ const ChannelSidebar = () => {
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   const textChannels = channels.filter((c) => c.type === "text");
   const voiceChannels = channels.filter((c) => c.type === "voice");
 
   return (
     <div className="flex flex-col w-60 bg-channel-bar shrink-0">
-      <button className="h-12 px-4 flex items-center justify-between border-b border-border/50 hover:bg-chat-hover transition-colors">
+      <button onClick={() => setShowSettings(true)} className="h-12 px-4 flex items-center justify-between border-b border-border/50 hover:bg-chat-hover transition-colors">
         <span className="font-semibold text-foreground truncate">{server?.name || "Select a server"}</span>
         <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
       </button>
@@ -110,6 +112,7 @@ const ChannelSidebar = () => {
       <CreateChannelDialog open={showCreateChannel} onClose={() => setShowCreateChannel(false)} />
       <InviteDialog open={showInvite} onClose={() => setShowInvite(false)} />
       <ProfileDialog open={showProfile} onClose={() => setShowProfile(false)} />
+      <ServerSettingsDialog open={showSettings} onClose={() => setShowSettings(false)} />
     </div>
   );
 };

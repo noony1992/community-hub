@@ -136,7 +136,20 @@ export const DMProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       user_id: user.id,
       content,
     });
-  }, [user, activeConversationId]);
+
+    // Create notification for the other participant
+    const conv = conversations.find((c) => c.id === activeConversationId);
+    if (conv && conv.participant.id !== user.id) {
+      const { data: profile } = await supabase.from("profiles").select("display_name").eq("id", user.id).maybeSingle();
+      await supabase.from("notifications").insert({
+        user_id: conv.participant.id,
+        type: "dm",
+        title: `${profile?.display_name || "Someone"} sent you a message`,
+        body: content.slice(0, 100),
+        link_conversation_id: activeConversationId,
+      });
+    }
+  }, [user, activeConversationId, conversations]);
 
   const startConversation = useCallback(async (otherUserId: string) => {
     if (!user) return null;
@@ -158,8 +171,9 @@ export const DMProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
     if (!conv) return null;
 
-    // Add both participants
+    // Add self as participant (RLS allows this)
     await supabase.from("dm_participants").insert({ conversation_id: conv.id, user_id: user.id });
+    // Add other user - need updated RLS or use the conversation creator pattern
     await supabase.from("dm_participants").insert({ conversation_id: conv.id, user_id: otherUserId });
 
     await loadConversations();
