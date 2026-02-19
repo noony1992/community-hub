@@ -2,12 +2,20 @@ import { useState } from "react";
 import { useDMContext } from "@/context/DMContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/AuthContext";
-import { Search, X } from "lucide-react";
+import { Search, Users, X } from "lucide-react";
 import StatusIndicator from "./StatusIndicator";
+import { getEffectiveStatus } from "@/lib/presence";
 
 const DMSidebar = () => {
   const { user } = useAuth();
-  const { conversations, activeConversationId, setActiveConversation, startConversation } = useDMContext();
+  const {
+    conversations,
+    activeConversationId,
+    setActiveConversation,
+    startConversation,
+    isFriendsView,
+    setIsFriendsView,
+  } = useDMContext();
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
@@ -31,6 +39,7 @@ const DMSidebar = () => {
 
   const handleStartDM = async (userId: string) => {
     await startConversation(userId);
+    setIsFriendsView(false);
     setSearchQuery("");
     setSearchResults([]);
   };
@@ -78,7 +87,7 @@ const DMSidebar = () => {
                     >
                       {initials}
                     </div>
-                    <StatusIndicator status={p.status as any} className="absolute -bottom-0.5 -right-0.5" />
+                    <StatusIndicator status={getEffectiveStatus(p.status, p.updated_at)} className="absolute -bottom-0.5 -right-0.5" />
                   </div>
                   <div className="text-left min-w-0">
                     <p className="text-foreground truncate">{p.display_name}</p>
@@ -89,6 +98,20 @@ const DMSidebar = () => {
             })}
           </div>
         )}
+      </div>
+
+      <div className="px-2 pb-2">
+        <button
+          onClick={() => setIsFriendsView(!isFriendsView)}
+          className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-sm transition-colors ${
+            isFriendsView
+              ? "bg-primary text-primary-foreground"
+              : "bg-secondary text-secondary-foreground hover:opacity-90"
+          }`}
+        >
+          <Users className="w-4 h-4" />
+          Friends
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 py-1 space-y-0.5">
@@ -103,7 +126,10 @@ const DMSidebar = () => {
           return (
             <button
               key={conv.id}
-              onClick={() => setActiveConversation(conv.id)}
+              onClick={() => {
+                setIsFriendsView(false);
+                setActiveConversation(conv.id);
+              }}
               className={`flex items-center gap-2.5 w-full px-2 py-1.5 rounded-md text-sm transition-colors ${
                 isActive
                   ? "bg-secondary text-foreground font-medium"
@@ -117,7 +143,7 @@ const DMSidebar = () => {
                 >
                   {initials}
                 </div>
-                <StatusIndicator status={p.status as any} className="absolute -bottom-0.5 -right-0.5" />
+                <StatusIndicator status={getEffectiveStatus(p.status, p.updated_at)} className="absolute -bottom-0.5 -right-0.5" />
               </div>
               <span className="truncate">{p.display_name}</span>
             </button>

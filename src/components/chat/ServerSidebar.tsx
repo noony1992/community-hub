@@ -1,12 +1,15 @@
 import { useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useChatContext } from "@/context/ChatContext";
 import { useDMContext } from "@/context/DMContext";
-import { Plus, MessageCircle, LogIn } from "lucide-react";
+import { Plus, MessageCircle, LogIn, Compass } from "lucide-react";
 import JoinServerDialog from "./JoinServerDialog";
 
 const ServerSidebar = () => {
   const { servers, activeServerId, setActiveServer, createServer, refreshServers } = useChatContext();
   const { isDMMode, setIsDMMode, setActiveConversation } = useDMContext();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin, setShowJoin] = useState(false);
   const [newName, setNewName] = useState("");
@@ -23,18 +26,37 @@ const ServerSidebar = () => {
     setIsDMMode(false);
     setActiveConversation(null);
     setActiveServer(id);
+    navigate("/");
   };
 
   return (
     <div className="flex flex-col items-center w-[72px] bg-server-bar py-3 gap-2 overflow-y-auto shrink-0">
       <button
-        onClick={() => setIsDMMode(true)}
+        onClick={() => {
+          setIsDMMode(true);
+          setActiveConversation(null);
+          navigate("/?view=dm");
+        }}
         className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-200 ${
           isDMMode ? "rounded-xl bg-primary text-primary-foreground" : "bg-chat-area text-foreground hover:rounded-xl hover:bg-primary hover:text-primary-foreground"
         }`}
         title="Direct Messages"
       >
         <MessageCircle className="w-6 h-6" />
+      </button>
+
+      <div className="w-8 h-[2px] bg-border rounded-full" />
+
+      <button
+        onClick={() => navigate("/discover")}
+        className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-200 ${
+          location.pathname.startsWith("/discover")
+            ? "rounded-xl bg-primary text-primary-foreground"
+            : "bg-chat-area text-foreground hover:rounded-xl hover:bg-primary hover:text-primary-foreground"
+        }`}
+        title="Discover"
+      >
+        <Compass className="w-5 h-5" />
       </button>
 
       <div className="w-8 h-[2px] bg-border rounded-full" />
@@ -46,13 +68,24 @@ const ServerSidebar = () => {
             <div className={`absolute left-0 w-1 rounded-r-full bg-foreground transition-all duration-200 ${isActive ? "h-10" : "h-0 group-hover:h-5"}`} />
             <button
               onClick={() => handleServerClick(server.id)}
-              className={`w-12 h-12 flex items-center justify-center text-sm font-semibold transition-all duration-200 ${isActive ? "rounded-xl" : "rounded-[24px] hover:rounded-xl"}`}
-              style={{ backgroundColor: isActive ? (server.color || "hsl(174,60%,45%)") : undefined }}
+              className={`w-12 h-12 overflow-hidden flex items-center justify-center text-sm font-semibold transition-all duration-200 ${
+                isActive
+                  ? "rounded-xl text-primary-foreground"
+                  : "rounded-[24px] text-foreground hover:rounded-xl hover:text-primary-foreground"
+              }`}
               title={server.name}
             >
-              <span className={isActive ? "text-primary-foreground" : "text-foreground"}>
-                {server.icon || server.name[0]}
-              </span>
+              {server.icon_url ? (
+                <img
+                  src={server.icon_url}
+                  alt={`${server.name} icon`}
+                  className="w-full h-full object-contain p-1"
+                />
+              ) : (
+                <span className={isActive ? "text-primary-foreground" : "text-foreground"}>
+                  {server.icon || server.name[0]}
+                </span>
+              )}
             </button>
           </div>
         );

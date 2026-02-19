@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "vitest run src/test/reliability.e2e.test.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

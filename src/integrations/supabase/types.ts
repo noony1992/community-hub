@@ -17,6 +17,7 @@ export type Database = {
       channels: {
         Row: {
           created_at: string
+          group_id: string | null
           id: string
           name: string
           server_id: string
@@ -24,6 +25,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          group_id?: string | null
           id?: string
           name: string
           server_id: string
@@ -31,6 +33,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          group_id?: string | null
           id?: string
           name?: string
           server_id?: string
@@ -38,10 +41,85 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "channels_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "channel_groups"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "channels_server_id_fkey"
             columns: ["server_id"]
             isOneToOne: false
             referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      channel_groups: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          position: number
+          server_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          position?: number
+          server_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          position?: number
+          server_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "channel_groups_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      channel_reads: {
+        Row: {
+          channel_id: string
+          last_read_at: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          channel_id: string
+          last_read_at?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          channel_id?: string
+          last_read_at?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "channel_reads_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: false
+            referencedRelation: "channels"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "channel_reads_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -93,6 +171,48 @@ export type Database = {
           },
         ]
       }
+      friendships: {
+        Row: {
+          addressee_id: string
+          created_at: string
+          id: string
+          requester_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          addressee_id: string
+          created_at?: string
+          id?: string
+          requester_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          addressee_id?: string
+          created_at?: string
+          id?: string
+          requester_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "friendships_addressee_id_fkey"
+            columns: ["addressee_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "friendships_requester_id_fkey"
+            columns: ["requester_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       dm_participants: {
         Row: {
           conversation_id: string
@@ -124,6 +244,7 @@ export type Database = {
       }
       invite_codes: {
         Row: {
+          assigned_role: string | null
           code: string
           created_at: string
           created_by: string
@@ -134,6 +255,7 @@ export type Database = {
           uses: number
         }
         Insert: {
+          assigned_role?: string | null
           code?: string
           created_at?: string
           created_by: string
@@ -144,6 +266,7 @@ export type Database = {
           uses?: number
         }
         Update: {
+          assigned_role?: string | null
           code?: string
           created_at?: string
           created_by?: string
@@ -230,6 +353,383 @@ export type Database = {
           },
         ]
       }
+      moderation_audit_logs: {
+        Row: {
+          action: string
+          actor_id: string
+          created_at: string
+          id: string
+          metadata: Json
+          server_id: string
+          target_user_id: string | null
+        }
+        Insert: {
+          action: string
+          actor_id: string
+          created_at?: string
+          id?: string
+          metadata?: Json
+          server_id: string
+          target_user_id?: string | null
+        }
+        Update: {
+          action?: string
+          actor_id?: string
+          created_at?: string
+          id?: string
+          metadata?: Json
+          server_id?: string
+          target_user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "moderation_audit_logs_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "moderation_audit_logs_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "moderation_audit_logs_target_user_id_fkey"
+            columns: ["target_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      moderation_appeals: {
+        Row: {
+          assigned_to: string | null
+          created_at: string
+          decided_at: string | null
+          decided_by: string | null
+          decision_note: string | null
+          id: string
+          punishment_ref_id: string | null
+          punishment_type: string
+          reason: string
+          server_id: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          assigned_to?: string | null
+          created_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          decision_note?: string | null
+          id?: string
+          punishment_ref_id?: string | null
+          punishment_type: string
+          reason: string
+          server_id: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          assigned_to?: string | null
+          created_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          decision_note?: string | null
+          id?: string
+          punishment_ref_id?: string | null
+          punishment_type?: string
+          reason?: string
+          server_id?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "moderation_appeals_assigned_to_fkey"
+            columns: ["assigned_to"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "moderation_appeals_decided_by_fkey"
+            columns: ["decided_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "moderation_appeals_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "moderation_appeals_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      moderation_escalation_queue: {
+        Row: {
+          assigned_to: string | null
+          context: Json
+          created_at: string
+          created_by: string | null
+          id: string
+          priority: string
+          reason: string
+          resolved_at: string | null
+          server_id: string
+          source_ref_id: string | null
+          source_type: string
+          status: string
+          target_user_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          assigned_to?: string | null
+          context?: Json
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          priority?: string
+          reason: string
+          resolved_at?: string | null
+          server_id: string
+          source_ref_id?: string | null
+          source_type: string
+          status?: string
+          target_user_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          assigned_to?: string | null
+          context?: Json
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          priority?: string
+          reason?: string
+          resolved_at?: string | null
+          server_id?: string
+          source_ref_id?: string | null
+          source_type?: string
+          status?: string
+          target_user_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "moderation_escalation_queue_assigned_to_fkey"
+            columns: ["assigned_to"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "moderation_escalation_queue_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "moderation_escalation_queue_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "moderation_escalation_queue_target_user_id_fkey"
+            columns: ["target_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      server_automod_rules: {
+        Row: {
+          block_all_links: boolean
+          blocked_domains: string[]
+          regex_patterns: string[]
+          server_id: string
+          toxicity_enabled: boolean
+          toxicity_terms: string[]
+          toxicity_threshold: number
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          block_all_links?: boolean
+          blocked_domains?: string[]
+          regex_patterns?: string[]
+          server_id: string
+          toxicity_enabled?: boolean
+          toxicity_terms?: string[]
+          toxicity_threshold?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          block_all_links?: boolean
+          blocked_domains?: string[]
+          regex_patterns?: string[]
+          server_id?: string
+          toxicity_enabled?: boolean
+          toxicity_terms?: string[]
+          toxicity_threshold?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "server_automod_rules_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: true
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "server_automod_rules_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_moderation_notes: {
+        Row: {
+          author_id: string
+          created_at: string
+          id: string
+          note: string
+          server_id: string
+          target_user_id: string
+        }
+        Insert: {
+          author_id: string
+          created_at?: string
+          id?: string
+          note: string
+          server_id: string
+          target_user_id: string
+        }
+        Update: {
+          author_id?: string
+          created_at?: string
+          id?: string
+          note?: string
+          server_id?: string
+          target_user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_moderation_notes_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_moderation_notes_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_moderation_notes_target_user_id_fkey"
+            columns: ["target_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_moderation_warnings: {
+        Row: {
+          author_id: string
+          clear_reason: string | null
+          cleared_at: string | null
+          cleared_by: string | null
+          created_at: string
+          expires_at: string | null
+          id: string
+          reason: string
+          server_id: string
+          target_user_id: string
+        }
+        Insert: {
+          author_id: string
+          clear_reason?: string | null
+          cleared_at?: string | null
+          cleared_by?: string | null
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          reason: string
+          server_id: string
+          target_user_id: string
+        }
+        Update: {
+          author_id?: string
+          clear_reason?: string | null
+          cleared_at?: string | null
+          cleared_by?: string | null
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          reason?: string
+          server_id?: string
+          target_user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_moderation_warnings_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_moderation_warnings_cleared_by_fkey"
+            columns: ["cleared_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_moderation_warnings_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_moderation_warnings_target_user_id_fkey"
+            columns: ["target_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notifications: {
         Row: {
           body: string | null
@@ -240,6 +740,7 @@ export type Database = {
           link_conversation_id: string | null
           link_message_id: string | null
           link_server_id: string | null
+          link_user_id: string | null
           title: string
           type: string
           user_id: string
@@ -253,6 +754,7 @@ export type Database = {
           link_conversation_id?: string | null
           link_message_id?: string | null
           link_server_id?: string | null
+          link_user_id?: string | null
           title: string
           type: string
           user_id: string
@@ -266,39 +768,131 @@ export type Database = {
           link_conversation_id?: string | null
           link_message_id?: string | null
           link_server_id?: string | null
+          link_user_id?: string | null
           title?: string
           type?: string
           user_id?: string
         }
         Relationships: []
       }
+      user_notification_mutes: {
+        Row: {
+          created_at: string
+          id: string
+          scope_id: string
+          scope_type: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          scope_id: string
+          scope_type: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          scope_id?: string
+          scope_type?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_notification_mutes_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_notification_settings: {
+        Row: {
+          created_at: string
+          keyword_alerts: string[]
+          mention_only: boolean
+          quiet_hours_enabled: boolean
+          quiet_hours_end: string
+          quiet_hours_start: string
+          quiet_hours_timezone: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          keyword_alerts?: string[]
+          mention_only?: boolean
+          quiet_hours_enabled?: boolean
+          quiet_hours_end?: string
+          quiet_hours_start?: string
+          quiet_hours_timezone?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          keyword_alerts?: string[]
+          mention_only?: boolean
+          quiet_hours_enabled?: boolean
+          quiet_hours_end?: string
+          quiet_hours_start?: string
+          quiet_hours_timezone?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_notification_settings_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null
+          banner_url: string | null
+          bio: string | null
           created_at: string
           display_name: string
           id: string
+          location: string | null
+          pronouns: string | null
           status: string
           updated_at: string
           username: string
+          website: string | null
         }
         Insert: {
           avatar_url?: string | null
+          banner_url?: string | null
+          bio?: string | null
           created_at?: string
           display_name: string
           id: string
+          location?: string | null
+          pronouns?: string | null
           status?: string
           updated_at?: string
           username: string
+          website?: string | null
         }
         Update: {
           avatar_url?: string | null
+          banner_url?: string | null
+          bio?: string | null
           created_at?: string
           display_name?: string
           id?: string
+          location?: string | null
+          pronouns?: string | null
           status?: string
           updated_at?: string
           username?: string
+          website?: string | null
         }
         Relationships: []
       }
@@ -345,22 +939,28 @@ export type Database = {
         Row: {
           id: string
           joined_at: string
+          muted_until: string | null
           role: string
           server_id: string
+          timed_out_until: string | null
           user_id: string
         }
         Insert: {
           id?: string
           joined_at?: string
+          muted_until?: string | null
           role?: string
           server_id: string
+          timed_out_until?: string | null
           user_id: string
         }
         Update: {
           id?: string
           joined_at?: string
+          muted_until?: string | null
           role?: string
           server_id?: string
+          timed_out_until?: string | null
           user_id?: string
         }
         Relationships: [
@@ -380,30 +980,125 @@ export type Database = {
           },
         ]
       }
+      server_rule_acceptances: {
+        Row: {
+          accepted_at: string
+          id: string
+          server_id: string
+          user_id: string
+        }
+        Insert: {
+          accepted_at?: string
+          id?: string
+          server_id: string
+          user_id: string
+        }
+        Update: {
+          accepted_at?: string
+          id?: string
+          server_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "server_rule_acceptances_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "server_rule_acceptances_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      server_roles: {
+        Row: {
+          color: string
+          created_at: string
+          id: string
+          name: string
+          permissions: Json
+          position: number
+          server_id: string
+        }
+        Insert: {
+          color?: string
+          created_at?: string
+          id?: string
+          name: string
+          permissions?: Json
+          position?: number
+          server_id: string
+        }
+        Update: {
+          color?: string
+          created_at?: string
+          id?: string
+          name?: string
+          permissions?: Json
+          position?: number
+          server_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "server_roles_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       servers: {
         Row: {
+          banner_url: string | null
           color: string | null
           created_at: string
           icon: string | null
+          icon_url: string | null
           id: string
+          is_discoverable: boolean
           name: string
+          onboarding_rules_text: string | null
+          onboarding_welcome_message: string | null
+          onboarding_welcome_title: string | null
           owner_id: string
+          owner_group_name: string
         }
         Insert: {
+          banner_url?: string | null
           color?: string | null
           created_at?: string
           icon?: string | null
+          icon_url?: string | null
           id?: string
+          is_discoverable?: boolean
           name: string
+          onboarding_rules_text?: string | null
+          onboarding_welcome_message?: string | null
+          onboarding_welcome_title?: string | null
           owner_id: string
+          owner_group_name?: string
         }
         Update: {
+          banner_url?: string | null
           color?: string | null
           created_at?: string
           icon?: string | null
+          icon_url?: string | null
           id?: string
+          is_discoverable?: boolean
           name?: string
+          onboarding_rules_text?: string | null
+          onboarding_welcome_message?: string | null
+          onboarding_welcome_title?: string | null
           owner_id?: string
+          owner_group_name?: string
         }
         Relationships: [
           {
@@ -415,18 +1110,90 @@ export type Database = {
           },
         ]
       }
+      server_bans: {
+        Row: {
+          banned_by: string | null
+          banned_user_id: string
+          created_at: string
+          expires_at: string | null
+          id: string
+          reason: string | null
+          server_id: string
+        }
+        Insert: {
+          banned_by?: string | null
+          banned_user_id: string
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          reason?: string | null
+          server_id: string
+        }
+        Update: {
+          banned_by?: string | null
+          banned_user_id?: string
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          reason?: string | null
+          server_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "server_bans_banned_by_fkey"
+            columns: ["banned_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "server_bans_banned_user_id_fkey"
+            columns: ["banned_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "server_bans_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      evaluate_automod_message: {
+        Args: { _content: string; _server_id: string; _user_id: string }
+        Returns: Json
+      }
+      expire_moderation_punishments: {
+        Args: { _server_id?: string | null }
+        Returns: Json
+      }
       is_dm_participant: {
         Args: { _conversation_id: string; _user_id: string }
+        Returns: boolean
+      }
+      has_server_permission: {
+        Args: { _permission: string; _server_id: string; _user_id: string }
+        Returns: boolean
+      }
+      is_server_banned: {
+        Args: { _server_id: string; _user_id: string }
         Returns: boolean
       }
       is_server_member: {
         Args: { _server_id: string; _user_id: string }
         Returns: boolean
+      }
+      start_direct_conversation: {
+        Args: { _other_user_id: string }
+        Returns: string
       }
     }
     Enums: {

@@ -1,8 +1,18 @@
-import { useState } from "react";
-import { X, MessageSquare, AtSign, Calendar } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { X, MessageSquare, AtSign, Calendar, MoreVertical, Shield } from "lucide-react";
 import { format } from "date-fns";
 import { useDMContext } from "@/context/DMContext";
+import { useAuth } from "@/context/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
 import StatusIndicator from "./StatusIndicator";
+import UserModerationSidebar from "./UserModerationSidebar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface UserProfileCardProps {
   user: {
@@ -16,11 +26,34 @@ interface UserProfileCardProps {
   open: boolean;
   onClose: () => void;
   position?: { top: number; left: number };
+  serverId?: string;
+  serverRole?: string;
+  serverRoleColor?: string;
 }
 
-const UserProfileCard = ({ user, open, onClose, position }: UserProfileCardProps) => {
+const UserProfileCard = ({ user, open, onClose, position, serverId, serverRole, serverRoleColor }: UserProfileCardProps) => {
+  const { user: currentUser } = useAuth();
   const { startConversation } = useDMContext();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
+  const [showModeration, setShowModeration] = useState(false);
+  const [canOpenModMenu, setCanOpenModMenu] = useState(false);
+
+  useEffect(() => {
+    const checkPermission = async () => {
+      if (!open || !serverId || !currentUser) {
+        setCanOpenModMenu(false);
+        return;
+      }
+      const { data } = await supabase.rpc("has_server_permission", {
+        _server_id: serverId,
+        _user_id: currentUser.id,
+        _permission: "mod_menu",
+      });
+      setCanOpenModMenu(!!data);
+    };
+    void checkPermission();
+  }, [open, serverId, currentUser]);
 
   if (!open) return null;
 
@@ -43,6 +76,24 @@ const UserProfileCard = ({ user, open, onClose, position }: UserProfileCardProps
       >
         {/* Banner */}
         <div className="h-16 relative" style={{ background: `linear-gradient(135deg, ${avatarColor}, hsl(var(--primary)))` }}>
+          {canOpenModMenu && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="absolute top-2 right-8 text-white/70 hover:text-white">
+                  <MoreVertical className="w-4 h-4" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem
+                  onClick={() => setShowModeration(true)}
+                  className="flex items-center gap-2 cursor-pointer"
+                >
+                  <Shield className="w-4 h-4" />
+                  <span>Moderate User</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           <button onClick={onClose} className="absolute top-2 right-2 text-white/70 hover:text-white">
             <X className="w-4 h-4" />
           </button>
@@ -51,13 +102,21 @@ const UserProfileCard = ({ user, open, onClose, position }: UserProfileCardProps
         {/* Avatar */}
         <div className="px-4 -mt-8 relative">
           <div className="relative inline-block">
-            <div
-              className="w-16 h-16 rounded-full flex items-center justify-center text-lg font-bold text-foreground border-4 border-card"
-              style={{ backgroundColor: avatarColor }}
-            >
-              {initials}
-            </div>
-            <StatusIndicator status={user.status as any} className="absolute bottom-0 right-0" size="md" />
+            {user.avatar_url ? (
+              <img
+                src={user.avatar_url}
+                alt={user.display_name}
+                className="w-16 h-16 rounded-full object-cover border-4 border-card"
+              />
+            ) : (
+              <div
+                className="w-16 h-16 rounded-full flex items-center justify-center text-lg font-bold text-foreground border-4 border-card"
+                style={{ backgroundColor: avatarColor }}
+              >
+                {initials}
+              </div>
+            )}
+            <StatusIndicator status={user.status as "online" | "idle" | "dnd" | "offline"} className="absolute bottom-0 right-0" size="md" />
           </div>
         </div>
 
@@ -65,6 +124,14 @@ const UserProfileCard = ({ user, open, onClose, position }: UserProfileCardProps
         <div className="p-4 pt-2">
           <h3 className="text-lg font-bold text-foreground">{user.display_name}</h3>
           <p className="text-sm text-muted-foreground">@{user.username}</p>
+          {serverRole && (
+            <span
+              className="mt-2 inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium"
+              style={{ borderColor: serverRoleColor || "hsl(var(--border))", color: serverRoleColor || "hsl(var(--foreground))" }}
+            >
+              {serverRole}
+            </span>
+          )}
 
           <div className="mt-3 pt-3 border-t border-border space-y-2">
             <div className="flex items-center gap-2 text-sm">
@@ -98,8 +165,24 @@ const UserProfileCard = ({ user, open, onClose, position }: UserProfileCardProps
             <MessageSquare className="w-4 h-4" />
             {loading ? "Opening..." : "Message"}
           </button>
+          <button
+            onClick={() => {
+              onClose();
+              const suffix = serverId ? `?server=${serverId}` : "";
+              navigate(`/profile/${user.id}${suffix}`);
+            }}
+            className="mt-2 w-full py-2 rounded-md bg-secondary text-secondary-foreground text-sm font-medium hover:opacity-90 transition-opacity"
+          >
+            View Full Profile
+          </button>
         </div>
       </div>
+      <UserModerationSidebar
+        open={showModeration}
+        onClose={() => setShowModeration(false)}
+        serverId={serverId}
+        user={user}
+      />
     </div>
   );
 };

@@ -3,6 +3,16 @@ import { X, Settings, Hash, Trash2, Shield, Users, Plus } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useChatContext } from "@/context/ChatContext";
 import { useAuth } from "@/context/AuthContext";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface ServerSettingsDialogProps {
   open: boolean;
@@ -20,6 +30,7 @@ const ServerSettingsDialog = ({ open, onClose }: ServerSettingsDialogProps) => {
   const [saving, setSaving] = useState(false);
   const [newChannelName, setNewChannelName] = useState("");
   const [newChannelType, setNewChannelType] = useState("text");
+  const [showDeleteServerConfirm, setShowDeleteServerConfirm] = useState(false);
 
   useEffect(() => {
     if (server) setServerName(server.name);
@@ -53,11 +64,16 @@ const ServerSettingsDialog = ({ open, onClose }: ServerSettingsDialogProps) => {
     await supabase.from("server_members").delete().eq("user_id", memberId).eq("server_id", server.id);
   };
 
-  const handleDeleteServer = async () => {
+  const handleDeleteServerRequest = () => {
     if (!isOwner) return;
-    if (!confirm("Are you sure you want to delete this server? This cannot be undone.")) return;
+    setShowDeleteServerConfirm(true);
+  };
+
+  const handleDeleteServerConfirm = async () => {
+    if (!isOwner) return;
     await supabase.from("servers").delete().eq("id", server.id);
     await refreshServers();
+    setShowDeleteServerConfirm(false);
     onClose();
   };
 
@@ -89,7 +105,7 @@ const ServerSettingsDialog = ({ open, onClose }: ServerSettingsDialogProps) => {
             <>
               <div className="h-px bg-border my-2" />
               <button
-                onClick={handleDeleteServer}
+                onClick={handleDeleteServerRequest}
                 className="flex items-center gap-2 w-full px-2 py-1.5 rounded-md text-sm text-destructive hover:bg-destructive/10 transition-colors"
               >
                 <Trash2 className="w-4 h-4" />
@@ -209,6 +225,22 @@ const ServerSettingsDialog = ({ open, onClose }: ServerSettingsDialogProps) => {
           )}
         </div>
       </div>
+      <AlertDialog open={showDeleteServerConfirm} onOpenChange={setShowDeleteServerConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete server?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void handleDeleteServerConfirm()}>
+              Delete Server
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

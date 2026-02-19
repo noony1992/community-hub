@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/AuthContext";
 import { useChatContext } from "@/context/ChatContext";
 import { LogIn, X } from "lucide-react";
+import BanAppealDialog from "@/components/chat/BanAppealDialog";
 
 interface JoinServerDialogProps {
   open: boolean;
@@ -15,6 +16,8 @@ const JoinServerDialog = ({ open, onClose }: JoinServerDialogProps) => {
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [banAppealOpen, setBanAppealOpen] = useState(false);
+  const [banAppealServerId, setBanAppealServerId] = useState<string | null>(null);
 
   const handleJoin = async () => {
     if (!code.trim() || !user) return;
@@ -23,7 +26,7 @@ const JoinServerDialog = ({ open, onClose }: JoinServerDialogProps) => {
 
     const { data: invite } = await supabase
       .from("invite_codes")
-      .select("server_id, max_uses, uses")
+      .select("server_id, max_uses, uses, expires_at, assigned_role")
       .eq("code", code.trim())
       .maybeSingle();
 
@@ -33,8 +36,27 @@ const JoinServerDialog = ({ open, onClose }: JoinServerDialogProps) => {
       return;
     }
 
+    if (invite.expires_at && new Date(invite.expires_at).getTime() <= Date.now()) {
+      setError("This invite has expired");
+      setLoading(false);
+      return;
+    }
+
     if (invite.max_uses && invite.uses >= invite.max_uses) {
       setError("This invite has expired");
+      setLoading(false);
+      return;
+    }
+
+    const { data: activeBan } = await supabase.rpc("is_server_banned", {
+      _server_id: invite.server_id,
+      _user_id: user.id,
+    });
+
+    if (activeBan) {
+      setError("You can't join this server because you are banned.");
+      setBanAppealServerId(invite.server_id);
+      setBanAppealOpen(true);
       setLoading(false);
       return;
     }
@@ -53,10 +75,32 @@ const JoinServerDialog = ({ open, onClose }: JoinServerDialogProps) => {
       return;
     }
 
-    await supabase.from("server_members").insert({
+    let roleToAssign = "member";
+    if (invite.assigned_role) {
+      const { data: role } = await supabase
+        .from("server_roles")
+        .select("name")
+        .eq("server_id", invite.server_id)
+        .eq("name", invite.assigned_role)
+        .maybeSingle();
+      roleToAssign = role?.name || "member";
+    }
+
+    const { error: joinError } = await supabase.from("server_members").insert({
       server_id: invite.server_id,
       user_id: user.id,
+      role: roleToAssign,
     });
+    if (joinError) {
+      const msg = (joinError.message || "").toLowerCase();
+      if (msg.includes("row-level security") || msg.includes("permission")) {
+        setError("You can't join this server because you are banned.");
+      } else {
+        setError(joinError.message || "Failed to join server.");
+      }
+      setLoading(false);
+      return;
+    }
 
     await supabase
       .from("invite_codes")
@@ -70,7 +114,15 @@ const JoinServerDialog = ({ open, onClose }: JoinServerDialogProps) => {
     setLoading(false);
   };
 
-  if (!open) return null;
+  if (!open) {
+    return (
+      <BanAppealDialog
+        open={banAppealOpen}
+        onOpenChange={setBanAppealOpen}
+        serverId={banAppealServerId}
+      />
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
@@ -102,6 +154,11 @@ const JoinServerDialog = ({ open, onClose }: JoinServerDialogProps) => {
           {loading ? "Joining..." : "Join Server"}
         </button>
       </div>
+      <BanAppealDialog
+        open={banAppealOpen}
+        onOpenChange={setBanAppealOpen}
+        serverId={banAppealServerId}
+      />
     </div>
   );
 };
