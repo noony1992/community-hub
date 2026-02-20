@@ -18,6 +18,7 @@ interface VoiceState {
   isConnected: boolean;
   isMuted: boolean;
   isDeafened: boolean;
+  voiceLatencyMs: number | null;
   joinVoiceChannel: (channelId: string) => Promise<void>;
   leaveVoiceChannel: () => Promise<void>;
   toggleMute: () => void;
@@ -50,6 +51,7 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [isConnected, setIsConnected] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
+  const [voiceLatencyMs, setVoiceLatencyMs] = useState<number | null>(null);
 
   const localStreamRef = useRef<MediaStream | null>(null);
   const signalChannelRef = useRef<RealtimeChannel | null>(null);
@@ -229,6 +231,38 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setParticipants([]);
     setIsConnected(false);
     setActiveVoiceChannelId(null);
+    setVoiceLatencyMs(null);
+  }, []);
+
+  const sampleVoiceLatency = useCallback(async () => {
+    if (peersRef.current.size === 0) {
+      setVoiceLatencyMs(null);
+      return;
+    }
+
+    const samples: number[] = [];
+    for (const pc of peersRef.current.values()) {
+      try {
+        const stats = await pc.getStats();
+        stats.forEach((report) => {
+          if (report.type !== "candidate-pair") return;
+          const pair = report as RTCIceCandidatePairStats;
+          if (pair.state !== "succeeded" || !pair.nominated) return;
+          if (typeof pair.currentRoundTripTime === "number") {
+            samples.push(pair.currentRoundTripTime * 1000);
+          }
+        });
+      } catch {
+        // Ignore per-peer stats failures and use remaining peers.
+      }
+    }
+
+    if (samples.length === 0) {
+      setVoiceLatencyMs(null);
+      return;
+    }
+    const avg = samples.reduce((sum, n) => sum + n, 0) / samples.length;
+    setVoiceLatencyMs(Math.max(1, Math.round(avg)));
   }, []);
 
   const sendSignal = useCallback((payload: SignalPayload) => {
@@ -430,6 +464,22 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
   }, [leaveVoiceChannel]);
 
+  useEffect(() => {
+    if (!isConnected) {
+      setVoiceLatencyMs(null);
+      return;
+    }
+
+    void sampleVoiceLatency();
+    const intervalId = window.setInterval(() => {
+      void sampleVoiceLatency();
+    }, 4000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isConnected, sampleVoiceLatency, participants.length]);
+
   const value = useMemo(
     () => ({
       activeVoiceChannelId,
@@ -437,12 +487,13 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       isConnected,
       isMuted,
       isDeafened,
+      voiceLatencyMs,
       joinVoiceChannel,
       leaveVoiceChannel,
       toggleMute,
       toggleDeafen,
     }),
-    [activeVoiceChannelId, isConnected, isDeafened, isMuted, joinVoiceChannel, leaveVoiceChannel, participants, toggleDeafen, toggleMute],
+    [activeVoiceChannelId, isConnected, isDeafened, isMuted, joinVoiceChannel, leaveVoiceChannel, participants, toggleDeafen, toggleMute, voiceLatencyMs],
   );
 
   return <VoiceContext.Provider value={value}>{children}</VoiceContext.Provider>;

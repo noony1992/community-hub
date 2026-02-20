@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { Fragment, useState, useEffect, useRef } from "react";
 import { useChatContext, type Message } from "@/context/ChatContext";
 import { X, SendHorizonal, MessageSquare, Search, ArrowLeft, Bell, BellOff } from "lucide-react";
-import { format } from "date-fns";
+import { format, isSameDay, isToday, isYesterday } from "date-fns";
 import { parseMessageFeatures } from "@/lib/messageFeatures";
 
 export interface ThreadSummaryItem {
@@ -96,6 +96,13 @@ const ThreadPanel = ({ parentMessage, onClose, onOpenThread, onBackToList, threa
     await sendMessage(content, undefined, parentMessage.id);
     const r = await getThreadReplies(parentMessage.id);
     setReplies(r);
+  };
+
+  const formatDateDividerLabel = (ts: string) => {
+    const date = new Date(ts);
+    if (isToday(date)) return "Today";
+    if (isYesterday(date)) return "Yesterday";
+    return format(date, "EEEE, MMM d, yyyy");
   };
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
@@ -210,23 +217,39 @@ const ThreadPanel = ({ parentMessage, onClose, onOpenThread, onBackToList, threa
           {replies.length} {replies.length === 1 ? "reply" : "replies"}
         </div>
 
-        {replies.map((msg) => (
-          <div key={msg.id} className="flex gap-2">
-            <div
-              className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0 text-foreground"
-              style={{ backgroundColor: `hsl(${(msg.user_id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}
-            >
-              {(members[msg.user_id]?.display_name || "?").slice(0, 2).toUpperCase()}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-xs font-semibold text-foreground">{members[msg.user_id]?.display_name || "Unknown"}</span>
-                <span className="text-[10px] text-muted-foreground">{format(new Date(msg.created_at), "h:mm a")}</span>
+        {replies.map((msg, i) => {
+          const prevMsg = replies[i - 1];
+          const showDateDivider = !prevMsg || !isSameDay(new Date(msg.created_at), new Date(prevMsg.created_at));
+
+          return (
+            <Fragment key={msg.id}>
+              {showDateDivider && (
+                <div className="flex items-center gap-3 py-1">
+                  <div className="h-px flex-1 bg-border/70" />
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {formatDateDividerLabel(msg.created_at)}
+                  </span>
+                  <div className="h-px flex-1 bg-border/70" />
+                </div>
+              )}
+              <div className="flex gap-2">
+                <div
+                  className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0 text-foreground"
+                  style={{ backgroundColor: `hsl(${(msg.user_id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}
+                >
+                  {(members[msg.user_id]?.display_name || "?").slice(0, 2).toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-xs font-semibold text-foreground">{members[msg.user_id]?.display_name || "Unknown"}</span>
+                    <span className="text-[10px] text-muted-foreground">{format(new Date(msg.created_at), "h:mm a")}</span>
+                  </div>
+                  <p className="text-sm text-foreground">{msg.content}</p>
+                </div>
               </div>
-              <p className="text-sm text-foreground">{msg.content}</p>
-            </div>
-          </div>
-        ))}
+            </Fragment>
+          );
+        })}
         <div ref={endRef} />
       </div>
 

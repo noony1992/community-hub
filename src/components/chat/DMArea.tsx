@@ -1,8 +1,8 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { Fragment, useState, useRef, useEffect, useMemo } from "react";
 import { useDMContext } from "@/context/DMContext";
 import { useAuth } from "@/context/AuthContext";
 import { AtSign, PlusCircle, Gift, Smile, SendHorizonal } from "lucide-react";
-import { format, isToday, isYesterday } from "date-fns";
+import { format, isSameDay, isToday, isYesterday } from "date-fns";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import StatusIndicator from "./StatusIndicator";
@@ -95,6 +95,13 @@ const DMArea = () => {
     return format(date, "MM/dd/yyyy h:mm a");
   };
 
+  const formatDateDividerLabel = (ts: string) => {
+    const date = new Date(ts);
+    if (isToday(date)) return "Today";
+    if (isYesterday(date)) return "Yesterday";
+    return format(date, "EEEE, MMM d, yyyy");
+  };
+
   // Build profile map from conversation participants
   const profileMap = useMemo(() => {
     const map: Record<string, { display_name: string; id: string }> = {};
@@ -184,7 +191,9 @@ const DMArea = () => {
         {dmMessages.map((msg, i) => {
           const sender = profileMap[msg.user_id];
           const prevMsg = dmMessages[i - 1];
+          const showDateDivider = !prevMsg || !isSameDay(new Date(msg.created_at), new Date(prevMsg.created_at));
           const isGrouped = prevMsg?.user_id === msg.user_id &&
+            !showDateDivider &&
             new Date(msg.created_at).getTime() - new Date(prevMsg.created_at).getTime() < 300000;
 
           const displayName = sender?.display_name || "Unknown";
@@ -192,41 +201,54 @@ const DMArea = () => {
 
           if (isGrouped) {
             return (
-              <div key={msg.id} className="pl-[52px] py-0.5 hover:bg-chat-hover rounded group relative">
-                <span className="text-[11px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity absolute -ml-[38px] mt-0.5">
-                  {format(new Date(msg.created_at), "h:mm a")}
-                </span>
-                <p className="text-sm text-foreground">
-                  {msg.content}
-                  {msg.client_status === "pending" && <span className="text-[10px] text-muted-foreground ml-1">(sending)</span>}
-                  {msg.client_status === "retrying" && <span className="text-[10px] text-amber-600 ml-1">(retrying)</span>}
-                  {msg.client_status === "failed" && <span className="text-[10px] text-destructive ml-1">(failed)</span>}
-                </p>
-              </div>
+              <Fragment key={msg.id}>
+                <div className="pl-[52px] py-0.5 hover:bg-chat-hover rounded group relative">
+                  <span className="text-[11px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity absolute -ml-[38px] mt-0.5">
+                    {format(new Date(msg.created_at), "h:mm a")}
+                  </span>
+                  <p className="text-sm text-foreground">
+                    {msg.content}
+                    {msg.client_status === "pending" && <span className="text-[10px] text-muted-foreground ml-1">(sending)</span>}
+                    {msg.client_status === "retrying" && <span className="text-[10px] text-amber-600 ml-1">(retrying)</span>}
+                    {msg.client_status === "failed" && <span className="text-[10px] text-destructive ml-1">(failed)</span>}
+                  </p>
+                </div>
+              </Fragment>
             );
           }
 
           return (
-            <div key={msg.id} className={`flex gap-3 py-1 hover:bg-chat-hover rounded px-1 group ${i > 0 ? "mt-3" : ""}`}>
-              <div
-                className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 mt-0.5 text-foreground"
-                style={{ backgroundColor: `hsl(${(msg.user_id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}
-              >
-                {initials}
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-sm font-semibold text-foreground">{displayName}</span>
-                  <span className="text-[11px] text-muted-foreground">{formatTimestamp(msg.created_at)}</span>
+            <Fragment key={msg.id}>
+              {showDateDivider && (
+                <div className="flex items-center gap-3 py-2">
+                  <div className="h-px flex-1 bg-border/70" />
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {formatDateDividerLabel(msg.created_at)}
+                  </span>
+                  <div className="h-px flex-1 bg-border/70" />
                 </div>
-                <p className="text-sm text-foreground">
-                  {msg.content}
-                  {msg.client_status === "pending" && <span className="text-[10px] text-muted-foreground ml-1">(sending)</span>}
-                  {msg.client_status === "retrying" && <span className="text-[10px] text-amber-600 ml-1">(retrying)</span>}
-                  {msg.client_status === "failed" && <span className="text-[10px] text-destructive ml-1">(failed)</span>}
-                </p>
+              )}
+              <div className={`flex gap-3 py-1 hover:bg-chat-hover rounded px-1 group ${i > 0 ? "mt-3" : ""}`}>
+                <div
+                  className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 mt-0.5 text-foreground"
+                  style={{ backgroundColor: `hsl(${(msg.user_id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}
+                >
+                  {initials}
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-sm font-semibold text-foreground">{displayName}</span>
+                    <span className="text-[11px] text-muted-foreground">{formatTimestamp(msg.created_at)}</span>
+                  </div>
+                  <p className="text-sm text-foreground">
+                    {msg.content}
+                    {msg.client_status === "pending" && <span className="text-[10px] text-muted-foreground ml-1">(sending)</span>}
+                    {msg.client_status === "retrying" && <span className="text-[10px] text-amber-600 ml-1">(retrying)</span>}
+                    {msg.client_status === "failed" && <span className="text-[10px] text-destructive ml-1">(failed)</span>}
+                  </p>
+                </div>
               </div>
-            </div>
+            </Fragment>
           );
         })}
         <div ref={messagesEndRef} />

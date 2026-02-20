@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useChatContext } from "@/context/ChatContext";
-import { Hash, Volume2, ChevronDown, Settings, Mic, Headphones, UserPlus, LogOut } from "lucide-react";
+import { Hash, Volume2, ChevronDown, Settings, Mic, Headphones, UserPlus, LogOut, PhoneOff } from "lucide-react";
 import StatusIndicator from "./StatusIndicator";
 import InviteDialog from "./InviteDialog";
 import ProfileDialog from "./ProfileDialog";
@@ -9,6 +9,7 @@ import NotificationBell from "./NotificationBell";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/AuthContext";
 import { useVoiceContext } from "@/context/VoiceContext";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,7 +31,7 @@ const ChannelSidebar = () => {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { activeServerId, activeChannelId, setActiveChannel, channels, channelGroups, servers, profile, members, refreshServers, unreadCountByChannel } = useChatContext();
-  const { activeVoiceChannelId, isConnected, isMuted, isDeafened, joinVoiceChannel, leaveVoiceChannel, toggleMute, toggleDeafen } = useVoiceContext();
+  const { activeVoiceChannelId, isConnected, isMuted, isDeafened, voiceLatencyMs, joinVoiceChannel, leaveVoiceChannel, toggleMute, toggleDeafen } = useVoiceContext();
   const server = servers.find((s) => s.id === activeServerId);
   const [showInvite, setShowInvite] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -50,6 +51,7 @@ const ChannelSidebar = () => {
   }));
   const ungroupedText = textChannels.filter((c) => !c.group_id);
   const ungroupedVoice = voiceChannels.filter((c) => !c.group_id);
+  const activeVoiceChannel = channels.find((c) => c.id === activeVoiceChannelId);
   const isOwner = !!user && !!server && server.owner_id === user.id;
   const currentMember = members.find((m) => m.id === user?.id);
   const canManageChannels = isOwner || (currentMember?.role_permissions || []).includes("manage_channels");
@@ -255,6 +257,35 @@ const ChannelSidebar = () => {
         )}
 
       </div>
+
+      {isConnected && activeVoiceChannel && (
+        <div className="relative z-20 -ml-[72px] w-[calc(100%+72px)] px-2 pb-2">
+          <div className="rounded-md border border-border/50 bg-server-bar px-2.5 py-2 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0 text-xs font-semibold text-foreground">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <Volume2 className="w-3.5 h-3.5 text-primary shrink-0" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="top" align="start">
+                  {voiceLatencyMs === null ? "Latency unavailable" : `Latency: ${voiceLatencyMs} ms`}
+                </TooltipContent>
+              </Tooltip>
+              <span className="truncate">
+                Connected to voice: <span className="text-primary">#{activeVoiceChannel.name}</span>
+              </span>
+            </div>
+            <button
+              onClick={() => void leaveVoiceChannel()}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0"
+            >
+              <PhoneOff className="w-3.5 h-3.5" />
+              Leave
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* User panel */}
       <div className="relative z-20 -ml-[72px] w-[calc(100%+72px)] h-[52px] px-2 bg-server-bar flex items-center justify-between">

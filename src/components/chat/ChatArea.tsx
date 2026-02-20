@@ -3,7 +3,7 @@ import { useChatContext, type Message } from "@/context/ChatContext";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { Hash, Pin, Users, Search, Inbox, HelpCircle, PlusCircle, Gift, Smile, SendHorizonal, Pencil, Trash2, X, Check, Paperclip, FileIcon, ImageIcon, MessageSquare, Reply, Volume2, PhoneOff, CalendarClock, Megaphone, BarChart3, CalendarDays } from "lucide-react";
-import { format, isToday, isYesterday } from "date-fns";
+import { format, isSameDay, isToday, isYesterday } from "date-fns";
 import { toast } from "sonner";
 import EmojiPicker from "./EmojiPicker";
 import MessageReactions from "./MessageReactions";
@@ -118,7 +118,6 @@ const ChatArea = () => {
 
   const channel = channels.find((c) => c.id === activeChannelId);
   const isVoiceChannelView = channel?.type === "voice";
-  const activeVoiceChannel = channels.find((c) => c.id === activeVoiceChannelId);
   const timedOutActive = !!moderationState.timed_out_until && new Date(moderationState.timed_out_until).getTime() > Date.now();
   const mutedActive = !!moderationState.muted_until && new Date(moderationState.muted_until).getTime() > Date.now();
   const bannedActive = moderationState.is_banned;
@@ -902,6 +901,13 @@ const ChatArea = () => {
     return format(date, "MM/dd/yyyy h:mm a");
   };
 
+  const formatDateDividerLabel = (ts: string) => {
+    const date = new Date(ts);
+    if (isToday(date)) return "Today";
+    if (isYesterday(date)) return "Yesterday";
+    return format(date, "EEEE, MMM d, yyyy");
+  };
+
   const isImage = (type: string | null) => type?.startsWith("image/");
 
   const renderAttachment = (msg: Message) => {
@@ -1229,50 +1235,6 @@ const ChatArea = () => {
           </div>
         </div>
 
-        {isConnected && activeVoiceChannel && (
-          <div className="px-4 py-3 border-b border-border/40 bg-secondary/20">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                <Volume2 className="w-4 h-4 text-primary" />
-                Connected to voice: <span className="text-primary">#{activeVoiceChannel.name}</span>
-              </div>
-              <button
-                onClick={() => void leaveVoiceChannel()}
-                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-              >
-                <PhoneOff className="w-3.5 h-3.5" />
-                Leave
-              </button>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              {participants.map((p) => {
-                const profile = memberMap[p.userId];
-                const initials = p.displayName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
-                return (
-                  <div key={p.userId} className="flex items-center gap-2 rounded-md bg-background/70 border border-border/60 px-2 py-1">
-                    {profile?.avatar_url ? (
-                      <img src={profile.avatar_url} alt={p.displayName} className="w-7 h-7 rounded-full object-cover" />
-                    ) : (
-                      <div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center text-[10px] font-semibold text-foreground">
-                        {initials}
-                      </div>
-                    )}
-                    <div className="leading-tight">
-                      <p className={`text-xs ${p.self ? "text-foreground font-semibold" : "text-foreground"}`}>
-                        {p.displayName}{p.self ? " (You)" : ""}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">
-                        {p.deafened ? "Deafened" : p.muted ? "Muted" : p.speaking ? "Speaking" : "Listening"}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
         {/* Messages */}
         <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
           {!activeChannelId && (
@@ -1296,7 +1258,9 @@ const ChatArea = () => {
             const isEditing = editingId === msg.id;
             const isBannedTombstone = msg.content === "User Banned";
             const parsedMessage = parseMessageFeatures(msg.content);
+            const showDateDivider = !prevMsg || !isSameDay(new Date(msg.created_at), new Date(prevMsg.created_at));
             const isGrouped = !isBannedTombstone &&
+              !showDateDivider &&
               prevMsg?.user_id === msg.user_id &&
               new Date(msg.created_at).getTime() - new Date(prevMsg.created_at).getTime() < 300000;
             const displayName = isBannedTombstone ? "User Banned" : (msgUser?.display_name || "Unknown");
@@ -1306,6 +1270,15 @@ const ChatArea = () => {
             if (isGrouped) {
               return (
                 <Fragment key={msg.id}>
+                  {showDateDivider && (
+                    <div className="flex items-center gap-3 py-2">
+                      <div className="h-px flex-1 bg-border/70" />
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        {formatDateDividerLabel(msg.created_at)}
+                      </span>
+                      <div className="h-px flex-1 bg-border/70" />
+                    </div>
+                  )}
                   {isFirstUnread && activeUnreadCount > 0 && (
                     <div className="flex items-center gap-2 py-2">
                       <div className="h-px flex-1 bg-primary/40" />
@@ -1367,6 +1340,15 @@ const ChatArea = () => {
 
             return (
               <Fragment key={msg.id}>
+                {showDateDivider && (
+                  <div className="flex items-center gap-3 py-2">
+                    <div className="h-px flex-1 bg-border/70" />
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      {formatDateDividerLabel(msg.created_at)}
+                    </span>
+                    <div className="h-px flex-1 bg-border/70" />
+                  </div>
+                )}
                 {isFirstUnread && activeUnreadCount > 0 && (
                   <div className="flex items-center gap-2 py-2">
                     <div className="h-px flex-1 bg-primary/40" />
