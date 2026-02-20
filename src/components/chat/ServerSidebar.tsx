@@ -30,7 +30,7 @@ const ServerSidebar = () => {
   };
 
   return (
-    <div className="flex flex-col items-center w-[72px] bg-server-bar py-3 gap-2 overflow-y-auto shrink-0">
+    <div className="relative z-0 flex flex-col items-center w-[72px] bg-server-bar py-3 gap-2 overflow-y-auto shrink-0">
       <button
         onClick={() => {
           setIsDMMode(true);

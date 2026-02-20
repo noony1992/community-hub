@@ -9,17 +9,33 @@ interface MentionAutocompleteProps {
 
 const MentionAutocomplete = ({ query, members, onSelect, visible }: MentionAutocompleteProps) => {
   const ref = useRef<HTMLDivElement>(null);
+  const queryLower = query.toLowerCase();
+  const showEveryone = queryLower.length === 0 || "everyone".startsWith(queryLower);
 
   const filtered = members.filter(
     (m) =>
-      m.username.toLowerCase().includes(query.toLowerCase()) ||
-      m.display_name.toLowerCase().includes(query.toLowerCase())
+      m.username.toLowerCase().includes(queryLower) ||
+      m.display_name.toLowerCase().includes(queryLower)
   ).slice(0, 6);
 
-  if (!visible || filtered.length === 0) return null;
+  if (!visible || (filtered.length === 0 && !showEveryone)) return null;
 
   return (
     <div ref={ref} className="absolute bottom-full left-0 mb-1 w-64 bg-card border border-border rounded-lg shadow-xl overflow-hidden z-50">
+      {showEveryone && (
+        <button
+          onClick={() => onSelect("everyone")}
+          className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-chat-hover transition-colors text-left"
+        >
+          <div className="w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-[10px] font-semibold">
+            @
+          </div>
+          <div className="min-w-0 flex-1">
+            <span className="text-foreground font-medium">@everyone</span>
+            <span className="text-muted-foreground ml-1 text-xs">Notify all server members</span>
+          </div>
+        </button>
+      )}
       {filtered.map((m) => (
         <button
           key={m.id}
@@ -56,7 +72,8 @@ export const renderContentWithMentions = (content: string, members: { username: 
     }
     const username = match[1];
     const isMember = members.some((m) => m.username.toLowerCase() === username.toLowerCase());
-    if (isMember) {
+    const isEveryone = username.toLowerCase() === "everyone";
+    if (isMember || isEveryone) {
       parts.push(
         <span key={match.index} className="bg-primary/20 text-primary rounded px-0.5 font-medium">
           @{username}

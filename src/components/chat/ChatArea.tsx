@@ -11,7 +11,6 @@ import SearchDialog from "./SearchDialog";
 import PinnedMessagesPanel from "./PinnedMessagesPanel";
 import ThreadPanel, { type ThreadSummaryItem } from "./ThreadPanel";
 import MentionAutocomplete, { renderContentWithMentions } from "./MentionAutocomplete";
-import NotificationBell from "./NotificationBell";
 import UserProfileCard from "./UserProfileCard";
 import { useVoiceContext } from "@/context/VoiceContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -36,10 +35,26 @@ type EventRsvp = {
   status: "going" | "maybe" | "not_going";
 };
 
+type OnboardingFlow = {
+  enabled: boolean;
+  assign_role_on_complete: string | null;
+};
+
+type OnboardingStep = {
+  id: string;
+  server_id: string;
+  step_type: "rules_acceptance" | "read_channel" | "custom_ack";
+  title: string;
+  description: string | null;
+  required_channel_id: string | null;
+  is_required: boolean;
+  position: number;
+};
+
 const ChatArea = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
-  const { activeChannelId, activeServerId, channels, messages, sendMessage, scheduleMessage, editMessage, deleteMessage, members, profile, typingUsers, setTyping, addReaction, pinMessage, unpinMessage, moderationState, servers, unreadCountByChannel, channelLastReadAtByChannel, markChannelAsRead } = useChatContext();
+  const { activeChannelId, activeServerId, channels, messages, sendMessage, scheduleMessage, editMessage, deleteMessage, members, profile, typingUsers, setTyping, addReaction, pinMessage, unpinMessage, moderationState, servers, unreadCountByChannel, channelLastReadAtByChannel, markChannelAsRead, setActiveChannel } = useChatContext();
   const { isConnected, activeVoiceChannelId, participants, leaveVoiceChannel } = useVoiceContext();
   const [input, setInput] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -60,6 +75,12 @@ const ChatArea = () => {
   const [rulesAccepted, setRulesAccepted] = useState(true);
   const [rulesChecklistChecked, setRulesChecklistChecked] = useState(false);
   const [acceptingRules, setAcceptingRules] = useState(false);
+  const [onboardingFlow, setOnboardingFlow] = useState<OnboardingFlow>({ enabled: false, assign_role_on_complete: null });
+  const [onboardingSteps, setOnboardingSteps] = useState<OnboardingStep[]>([]);
+  const [onboardingCustomCompletedIds, setOnboardingCustomCompletedIds] = useState<Set<string>>(new Set());
+  const [onboardingReadChannelIds, setOnboardingReadChannelIds] = useState<Set<string>>(new Set());
+  const [onboardingCustomChecks, setOnboardingCustomChecks] = useState<Record<string, boolean>>({});
+  const [submittingOnboardingCompletion, setSubmittingOnboardingCompletion] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [scheduleAt, setScheduleAt] = useState("");
   const [scheduleAnnouncement, setScheduleAnnouncement] = useState(false);
@@ -167,6 +188,22 @@ const ChatArea = () => {
     activeServer?.onboarding_welcome_message || "Please review and accept the server rules before you can chat.";
   const onboardingRulesText =
     activeServer?.onboarding_rules_text || "Be respectful. No harassment. Stay on topic and follow moderator guidance.";
+  const onboardingStepStatus = useMemo(() => {
+    return onboardingSteps.map((step) => {
+      if (step.step_type === "rules_acceptance") {
+        return { ...step, complete: rulesAccepted };
+      }
+      if (step.step_type === "read_channel") {
+        return { ...step, complete: !!step.required_channel_id && onboardingReadChannelIds.has(step.required_channel_id) };
+      }
+      return { ...step, complete: onboardingCustomCompletedIds.has(step.id) };
+    });
+  }, [onboardingCustomCompletedIds, onboardingReadChannelIds, onboardingSteps, rulesAccepted]);
+  const missingRequiredOnboardingSteps = useMemo(
+    () => onboardingStepStatus.filter((step) => step.is_required && !step.complete),
+    [onboardingStepStatus],
+  );
+  const onboardingBlocked = onboardingFlow.enabled && missingRequiredOnboardingSteps.length > 0;
   const eventsByDate = useMemo(() => {
     const grouped = new Map<string, ServerEvent[]>();
     events.forEach((event) => {
@@ -465,25 +502,71 @@ const ChatArea = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [activeUnreadCount, activeChannelId, messages.length]);
 
-  useEffect(() => {
-    const checkRulesAcceptance = async () => {
-      if (!user?.id || !activeServerId) {
-        setRulesAccepted(true);
-        return;
-      }
-      setCheckingRulesAcceptance(true);
-      const { data } = await supabase
+  const loadOnboardingState = useCallback(async () => {
+    if (!user?.id || !activeServerId) {
+      setRulesAccepted(true);
+      setOnboardingFlow({ enabled: false, assign_role_on_complete: null });
+      setOnboardingSteps([]);
+      setOnboardingCustomCompletedIds(new Set());
+      setOnboardingReadChannelIds(new Set());
+      return;
+    }
+
+    setCheckingRulesAcceptance(true);
+
+    const [{ data: flowRow }, { data: stepRows }, { data: ruleAcceptance }, { data: customProgressRows }] = await Promise.all([
+      (supabase as any)
+        .from("server_onboarding_flows")
+        .select("enabled, assign_role_on_complete")
+        .eq("server_id", activeServerId)
+        .maybeSingle(),
+      (supabase as any)
+        .from("server_onboarding_steps")
+        .select("id, server_id, step_type, title, description, required_channel_id, is_required, position")
+        .eq("server_id", activeServerId)
+        .order("position", { ascending: true })
+        .order("created_at", { ascending: true }),
+      supabase
         .from("server_rule_acceptances")
         .select("accepted_at")
         .eq("server_id", activeServerId)
         .eq("user_id", user.id)
-        .maybeSingle();
-      setRulesAccepted(!!data?.accepted_at);
-      setRulesChecklistChecked(false);
-      setCheckingRulesAcceptance(false);
-    };
-    void checkRulesAcceptance();
+        .maybeSingle(),
+      (supabase as any)
+        .from("user_onboarding_step_progress")
+        .select("step_id")
+        .eq("server_id", activeServerId)
+        .eq("user_id", user.id),
+    ]);
+
+    const requiredReadChannelIds = ((stepRows || []) as OnboardingStep[])
+      .filter((step) => step.step_type === "read_channel" && !!step.required_channel_id)
+      .map((step) => step.required_channel_id as string);
+
+    const { data: readRows } = requiredReadChannelIds.length > 0
+      ? await (supabase as any)
+          .from("channel_reads")
+          .select("channel_id")
+          .eq("user_id", user.id)
+          .in("channel_id", requiredReadChannelIds)
+      : { data: [] as Array<{ channel_id: string }> };
+
+    setOnboardingFlow({
+      enabled: flowRow?.enabled ?? false,
+      assign_role_on_complete: flowRow?.assign_role_on_complete || null,
+    });
+    setOnboardingSteps((stepRows || []) as OnboardingStep[]);
+    setOnboardingCustomChecks({});
+    setRulesAccepted(!!ruleAcceptance?.accepted_at);
+    setOnboardingCustomCompletedIds(new Set(((customProgressRows || []) as Array<{ step_id: string }>).map((row) => row.step_id)));
+    setOnboardingReadChannelIds(new Set(((readRows || []) as Array<{ channel_id: string }>).map((row) => row.channel_id)));
+    setRulesChecklistChecked(false);
+    setCheckingRulesAcceptance(false);
   }, [activeServerId, user?.id]);
+
+  useEffect(() => {
+    void loadOnboardingState();
+  }, [loadOnboardingState]);
 
   const handleAcceptRules = useCallback(async () => {
     if (!user?.id || !activeServerId || rulesAccepted) return;
@@ -511,7 +594,36 @@ const ChatArea = () => {
       return;
     }
     setRulesAccepted(true);
-  }, [activeServerId, rulesAccepted, user?.id]);
+    await (supabase as any).rpc("complete_onboarding_for_current_user", {
+      _server_id: activeServerId,
+      _completed_custom_step_ids: [],
+    });
+    await loadOnboardingState();
+  }, [activeServerId, loadOnboardingState, rulesAccepted, user?.id]);
+
+  const handleCompleteOnboarding = useCallback(async () => {
+    if (!activeServerId || !user?.id) return;
+    const customStepIdsToSubmit = onboardingStepStatus
+      .filter((step) => step.step_type === "custom_ack")
+      .filter((step) => onboardingCustomChecks[step.id] && !onboardingCustomCompletedIds.has(step.id))
+      .map((step) => step.id);
+    setSubmittingOnboardingCompletion(true);
+    const { data, error } = await (supabase as any).rpc("complete_onboarding_for_current_user", {
+      _server_id: activeServerId,
+      _completed_custom_step_ids: customStepIdsToSubmit,
+    });
+    setSubmittingOnboardingCompletion(false);
+    if (error) {
+      toast.error(`Failed to update onboarding progress: ${error.message}`);
+      return;
+    }
+    await loadOnboardingState();
+    if (data?.complete) {
+      toast.success(data?.role_assigned ? "Onboarding complete. Role assigned." : "Onboarding complete.");
+    } else {
+      toast.error(`${data?.missing_required_steps || 0} required step(s) remaining.`);
+    }
+  }, [activeServerId, loadOnboardingState, onboardingCustomChecks, onboardingCustomCompletedIds, onboardingStepStatus, user?.id]);
 
   useEffect(() => {
     setShowThreadPanel(false);
@@ -567,7 +679,7 @@ const ChatArea = () => {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (checkingRulesAcceptance) return;
-    if (!rulesAccepted) return;
+    if (onboardingBlocked) return;
     if (timedOutActive || mutedActive || bannedActive) {
       notifyRestriction();
       return;
@@ -615,7 +727,7 @@ const ChatArea = () => {
 
   const handleSend = async () => {
     if (checkingRulesAcceptance) return;
-    if (!rulesAccepted) return;
+    if (onboardingBlocked) return;
     if (timedOutActive || mutedActive || bannedActive) {
       notifyRestriction();
       return;
@@ -1086,7 +1198,6 @@ const ChatArea = () => {
             )}
           </div>
           <div className="flex items-center gap-3">
-            <NotificationBell />
             <button
               onClick={() => setShowEventsModal(true)}
               className="text-muted-foreground hover:text-foreground transition-colors"
@@ -1206,8 +1317,8 @@ const ChatArea = () => {
                   )}
                 <div
                   id={`msg-${msg.id}`}
-                  className={`${isBannedTombstone ? "pl-1" : "pl-[52px]"} py-0.5 hover:bg-chat-hover rounded group relative ${
-                    msg.pinned_at ? "border-l-2 border-primary/40 -ml-1 pl-[54px]" : ""
+                  className={`${isBannedTombstone ? "pl-1" : "pl-[56px]"} py-0.5 hover:bg-chat-hover rounded group relative ${
+                    msg.pinned_at ? "border-l-2 border-primary/40 -ml-1 pl-[58px]" : ""
                   }`}
                 >
                   <span className="text-[11px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity absolute -ml-[38px] mt-0.5">
@@ -1415,7 +1526,7 @@ const ChatArea = () => {
                           : `Message #${channel?.name || "general"}`
                 }
                 className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
-                disabled={uploading || !rulesAccepted || checkingRulesAcceptance}
+                disabled={uploading || onboardingBlocked || checkingRulesAcceptance}
               />
               <div className="flex items-center gap-2 shrink-0">
                 <button
@@ -1457,31 +1568,120 @@ const ChatArea = () => {
           </div>
         )}
 
-        {!checkingRulesAcceptance && !rulesAccepted && (
+        {!checkingRulesAcceptance && onboardingBlocked && (
           <div className="absolute inset-0 z-30 bg-chat-area/95 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="w-full max-w-2xl rounded-xl border border-border bg-card shadow-xl p-5">
               <h2 className="text-xl font-semibold text-foreground mb-2">{onboardingTitle}</h2>
               <p className="text-sm text-muted-foreground mb-4">{onboardingMessage}</p>
-              <div className="rounded-md border border-border bg-secondary/20 p-3 max-h-64 overflow-y-auto">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Server Rules</p>
-                <p className="text-sm whitespace-pre-wrap text-foreground">{onboardingRulesText}</p>
+              <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+                {onboardingStepStatus.map((step) => {
+                  const stepComplete = step.complete;
+                  if (step.step_type === "rules_acceptance") {
+                    return (
+                      <div key={step.id} className="rounded-md border border-border bg-secondary/20 p-3">
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <p className="text-sm font-medium text-foreground">{step.title}</p>
+                          <span className={`text-xs ${stepComplete ? "text-primary" : "text-muted-foreground"}`}>
+                            {stepComplete ? "Completed" : "Required"}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mb-2 whitespace-pre-wrap">
+                          {step.description || onboardingRulesText}
+                        </p>
+                        <div className="rounded-md border border-border bg-background/70 p-2 max-h-40 overflow-y-auto mb-2">
+                          <p className="text-sm whitespace-pre-wrap text-foreground">{onboardingRulesText}</p>
+                        </div>
+                        {!stepComplete && (
+                          <>
+                            <label className="flex items-center gap-2 text-sm text-foreground">
+                              <input
+                                type="checkbox"
+                                checked={rulesChecklistChecked}
+                                onChange={(e) => setRulesChecklistChecked(e.target.checked)}
+                                className="rounded border-border"
+                              />
+                              I have read and agree to these rules.
+                            </label>
+                            <div className="mt-2 flex justify-end">
+                              <button
+                                onClick={() => void handleAcceptRules()}
+                                disabled={!rulesChecklistChecked || acceptingRules}
+                                className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm disabled:opacity-50"
+                              >
+                                {acceptingRules ? "Accepting..." : "Accept Rules"}
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  if (step.step_type === "read_channel") {
+                    const requiredChannel = channels.find((c) => c.id === step.required_channel_id);
+                    return (
+                      <div key={step.id} className="rounded-md border border-border bg-secondary/20 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-medium text-foreground">{step.title}</p>
+                          <span className={`text-xs ${stepComplete ? "text-primary" : "text-muted-foreground"}`}>
+                            {stepComplete ? "Completed" : "Required"}
+                          </span>
+                        </div>
+                        {step.description && <p className="text-xs text-muted-foreground mt-1">{step.description}</p>}
+                        <p className="text-xs text-foreground mt-2">
+                          Read channel: <span className="font-medium">#{requiredChannel?.name || "unknown"}</span>
+                        </p>
+                        {!stepComplete && requiredChannel && (
+                          <div className="mt-2 flex justify-end">
+                            <button
+                              onClick={() => {
+                                setActiveChannel(requiredChannel.id);
+                                void (async () => {
+                                  await markChannelAsRead(requiredChannel.id);
+                                  await loadOnboardingState();
+                                })();
+                              }}
+                              className="px-3 py-1.5 rounded-md bg-secondary text-secondary-foreground text-sm"
+                            >
+                              Open Channel
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div key={step.id} className="rounded-md border border-border bg-secondary/20 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-foreground">{step.title}</p>
+                        <span className={`text-xs ${stepComplete ? "text-primary" : "text-muted-foreground"}`}>
+                          {stepComplete ? "Completed" : "Required"}
+                        </span>
+                      </div>
+                      {step.description && <p className="text-xs text-muted-foreground mt-1">{step.description}</p>}
+                      {!stepComplete && (
+                        <label className="mt-2 inline-flex items-center gap-2 text-sm text-foreground">
+                          <input
+                            type="checkbox"
+                            checked={!!onboardingCustomChecks[step.id]}
+                            onChange={(e) => setOnboardingCustomChecks((prev) => ({ ...prev, [step.id]: e.target.checked }))}
+                            className="rounded border-border"
+                          />
+                          Mark complete
+                        </label>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-              <label className="mt-4 flex items-center gap-2 text-sm text-foreground">
-                <input
-                  type="checkbox"
-                  checked={rulesChecklistChecked}
-                  onChange={(e) => setRulesChecklistChecked(e.target.checked)}
-                  className="rounded border-border"
-                />
-                I have read and agree to these rules.
-              </label>
               <div className="mt-4 flex justify-end">
                 <button
-                  onClick={() => void handleAcceptRules()}
-                  disabled={!rulesChecklistChecked || acceptingRules}
+                  onClick={() => void handleCompleteOnboarding()}
+                  disabled={submittingOnboardingCompletion}
                   className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50"
                 >
-                  {acceptingRules ? "Accepting..." : "Accept & Continue"}
+                  {submittingOnboardingCompletion ? "Saving..." : "Complete Onboarding"}
                 </button>
               </div>
             </div>

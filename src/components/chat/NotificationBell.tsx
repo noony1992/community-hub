@@ -141,9 +141,10 @@ const NotificationBell = () => {
     <div className="relative flex items-center">
       <button
         onClick={() => setOpen(!open)}
-        className="relative inline-flex h-5 w-5 items-center justify-center leading-none text-muted-foreground hover:text-foreground transition-colors"
+        className="relative inline-flex items-center justify-center p-1 leading-none text-muted-foreground hover:text-foreground transition-colors"
+        title="Notifications"
       >
-        <Bell className="w-5 h-5 block" />
+        <Bell className="w-4 h-4 block" />
         {unreadCount > 0 && (
           <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold px-1">
             {unreadCount > 99 ? "99+" : unreadCount}
@@ -152,7 +153,7 @@ const NotificationBell = () => {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-8 w-80 bg-card border border-border rounded-xl shadow-2xl z-50 overflow-hidden">
+        <div className="absolute left-0 bottom-8 w-80 bg-card border border-border rounded-xl shadow-2xl z-50 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border">
             <h3 className="text-sm font-semibold text-foreground">Notifications</h3>
             <div className="flex items-center gap-2">

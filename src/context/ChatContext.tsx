@@ -1164,9 +1164,15 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const mentionRegex = /@(\w+)/g;
     const mentionedUserIds = new Set<string>();
+    let hasEveryoneMention = false;
     let match;
     while ((match = mentionRegex.exec(content)) !== null) {
-      const mentionedUser = members.find((m) => m.username === match![1]);
+      const token = (match[1] || "").toLowerCase();
+      if (token === "everyone") {
+        hasEveryoneMention = true;
+        continue;
+      }
+      const mentionedUser = members.find((m) => m.username.toLowerCase() === token);
       if (mentionedUser && mentionedUser.id !== user.id) {
         mentionedUserIds.add(mentionedUser.id);
       }
@@ -1201,12 +1207,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (mutedServer || mutedChannel) return [];
       if (userSettings && isWithinQuietHours(userSettings)) return [];
 
-      const isMention = mentionedUserIds.has(recipientId);
+      const isMention = hasEveryoneMention || mentionedUserIds.has(recipientId);
       if (isMention) {
         return [{
           user_id: recipientId,
           type: "mention",
-          title: `${profile?.display_name || "Someone"} mentioned you in #${channel?.name || "channel"}`,
+          title: hasEveryoneMention
+            ? `${profile?.display_name || "Someone"} mentioned @everyone in #${channel?.name || "channel"}`
+            : `${profile?.display_name || "Someone"} mentioned you in #${channel?.name || "channel"}`,
           body: content.slice(0, 100),
           link_channel_id: channelId,
           link_server_id: serverId,
@@ -1761,6 +1769,19 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         { server_id: s.id, name: "start-here", type: "text" },
         { server_id: s.id, name: "introductions", type: "text" },
       ]);
+      await (supabase as any).from("server_onboarding_flows").upsert({
+        server_id: s.id,
+        enabled: true,
+        assign_role_on_complete: null,
+      });
+      await (supabase as any).from("server_onboarding_steps").insert({
+        server_id: s.id,
+        position: 1,
+        step_type: "rules_acceptance",
+        title: "Accept server rules",
+        description: "Review and accept server rules before participating.",
+        is_required: true,
+      });
       setServers((prev) => [...prev, s]);
       setActiveServerId(s.id);
     }

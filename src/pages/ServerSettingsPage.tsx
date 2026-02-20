@@ -113,6 +113,22 @@ interface AppealItem {
   updated_at: string;
 }
 
+interface OnboardingFlowConfig {
+  enabled: boolean;
+  assign_role_on_complete: string | null;
+}
+
+interface OnboardingStepItem {
+  id: string;
+  server_id: string;
+  position: number;
+  step_type: "rules_acceptance" | "read_channel" | "custom_ack";
+  title: string;
+  description: string | null;
+  required_channel_id: string | null;
+  is_required: boolean;
+}
+
 const normalizeChannelName = (value: string) => value.trim().toLowerCase().replace(/\s+/g, "-");
 
 const ROLE_PERMISSION_OPTIONS = [
@@ -311,6 +327,21 @@ const ServerSettingsPage = () => {
   const [onboardingWelcomeTitle, setOnboardingWelcomeTitle] = useState("");
   const [onboardingWelcomeMessage, setOnboardingWelcomeMessage] = useState("");
   const [onboardingRulesText, setOnboardingRulesText] = useState("");
+  const [onboardingFlow, setOnboardingFlow] = useState<OnboardingFlowConfig>({
+    enabled: true,
+    assign_role_on_complete: null,
+  });
+  const [onboardingSteps, setOnboardingSteps] = useState<OnboardingStepItem[]>([]);
+  const [loadingOnboardingBuilder, setLoadingOnboardingBuilder] = useState(false);
+  const [savingOnboardingFlow, setSavingOnboardingFlow] = useState(false);
+  const [creatingOnboardingStep, setCreatingOnboardingStep] = useState(false);
+  const [updatingOnboardingStepId, setUpdatingOnboardingStepId] = useState<string | null>(null);
+  const [deletingOnboardingStepId, setDeletingOnboardingStepId] = useState<string | null>(null);
+  const [newOnboardingStepType, setNewOnboardingStepType] = useState<OnboardingStepItem["step_type"]>("custom_ack");
+  const [newOnboardingStepTitle, setNewOnboardingStepTitle] = useState("");
+  const [newOnboardingStepDescription, setNewOnboardingStepDescription] = useState("");
+  const [newOnboardingStepChannelId, setNewOnboardingStepChannelId] = useState("");
+  const [newOnboardingStepRequired, setNewOnboardingStepRequired] = useState(true);
 
   const server = useMemo(() => servers.find((s) => s.id === serverId), [servers, serverId]);
   const isOwner = !!user && !!server && server.owner_id === user.id;
@@ -362,6 +393,41 @@ const ServerSettingsPage = () => {
       setTab(hasManageChannelsPermission ? "channels" : "moderation");
     }
   }, [isOwner, tab, hasManageChannelsPermission]);
+
+  const loadOnboardingBuilder = useCallback(async () => {
+    if (!serverId || !isOwner) return;
+    setLoadingOnboardingBuilder(true);
+    const [{ data: flowRow, error: flowError }, { data: stepRows, error: stepError }] = await Promise.all([
+      (supabase as any)
+        .from("server_onboarding_flows")
+        .select("enabled, assign_role_on_complete")
+        .eq("server_id", serverId)
+        .maybeSingle(),
+      (supabase as any)
+        .from("server_onboarding_steps")
+        .select("id, server_id, position, step_type, title, description, required_channel_id, is_required")
+        .eq("server_id", serverId)
+        .order("position", { ascending: true })
+        .order("created_at", { ascending: true }),
+    ]);
+
+    if (flowError) {
+      setLoadingOnboardingBuilder(false);
+      alert(`Failed to load onboarding flow: ${flowError.message}`);
+      return;
+    }
+    if (stepError) {
+      setLoadingOnboardingBuilder(false);
+      alert(`Failed to load onboarding steps: ${stepError.message}`);
+      return;
+    }
+    setOnboardingFlow({
+      enabled: flowRow?.enabled ?? true,
+      assign_role_on_complete: flowRow?.assign_role_on_complete || null,
+    });
+    setOnboardingSteps((stepRows || []) as OnboardingStepItem[]);
+    setLoadingOnboardingBuilder(false);
+  }, [isOwner, serverId]);
 
   const loadRoles = useCallback(async () => {
     if (!serverId) return;
@@ -426,6 +492,11 @@ const ServerSettingsPage = () => {
     loadMembers();
   }, [serverId, loadRoles]);
 
+  useEffect(() => {
+    if (tab !== "info" || !isOwner) return;
+    void loadOnboardingBuilder();
+  }, [tab, isOwner, loadOnboardingBuilder]);
+
   const handleSaveInfo = async () => {
     const cleanName = serverName.trim();
     if (!cleanName) return;
@@ -466,6 +537,125 @@ const ServerSettingsPage = () => {
 
     await refreshServers();
     setSavingInfo(false);
+  };
+
+  const handleSaveOnboardingFlow = async () => {
+    if (!serverId || !isOwner) return;
+    setSavingOnboardingFlow(true);
+    const roleName = onboardingFlow.assign_role_on_complete?.trim() || null;
+    const { error } = await (supabase as any)
+      .from("server_onboarding_flows")
+      .upsert({
+        server_id: serverId,
+        enabled: onboardingFlow.enabled,
+        assign_role_on_complete: roleName,
+      });
+    setSavingOnboardingFlow(false);
+    if (error) {
+      alert(`Failed to save onboarding flow: ${error.message}`);
+      return;
+    }
+    setOnboardingFlow((prev) => ({ ...prev, assign_role_on_complete: roleName }));
+    alert("Onboarding flow saved.");
+  };
+
+  const handleCreateOnboardingStep = async () => {
+    if (!serverId || !isOwner) return;
+    const cleanTitle = newOnboardingStepTitle.trim();
+    if (!cleanTitle) return;
+    if (newOnboardingStepType === "read_channel" && !newOnboardingStepChannelId) {
+      alert("Select a channel for required read steps.");
+      return;
+    }
+    setCreatingOnboardingStep(true);
+    const nextPosition = (onboardingSteps[onboardingSteps.length - 1]?.position || 0) + 1;
+    const { data, error } = await (supabase as any)
+      .from("server_onboarding_steps")
+      .insert({
+        server_id: serverId,
+        position: nextPosition,
+        step_type: newOnboardingStepType,
+        title: cleanTitle,
+        description: newOnboardingStepDescription.trim() || null,
+        required_channel_id: newOnboardingStepType === "read_channel" ? newOnboardingStepChannelId : null,
+        is_required: newOnboardingStepRequired,
+      })
+      .select("id, server_id, position, step_type, title, description, required_channel_id, is_required")
+      .single();
+    setCreatingOnboardingStep(false);
+    if (error || !data) {
+      alert(`Failed to create onboarding step: ${error?.message || "Unknown error"}`);
+      return;
+    }
+    setOnboardingSteps((prev) => [...prev, data as OnboardingStepItem].sort((a, b) => a.position - b.position));
+    setNewOnboardingStepTitle("");
+    setNewOnboardingStepDescription("");
+    setNewOnboardingStepChannelId("");
+    setNewOnboardingStepRequired(true);
+    setNewOnboardingStepType("custom_ack");
+  };
+
+  const handleToggleOnboardingStepRequired = async (step: OnboardingStepItem, required: boolean) => {
+    if (!serverId || !isOwner) return;
+    setUpdatingOnboardingStepId(step.id);
+    const { error } = await (supabase as any)
+      .from("server_onboarding_steps")
+      .update({ is_required: required })
+      .eq("id", step.id)
+      .eq("server_id", serverId);
+    setUpdatingOnboardingStepId(null);
+    if (error) {
+      alert(`Failed to update step: ${error.message}`);
+      return;
+    }
+    setOnboardingSteps((prev) => prev.map((item) => (item.id === step.id ? { ...item, is_required: required } : item)));
+  };
+
+  const handleDeleteOnboardingStep = async (stepId: string) => {
+    if (!serverId || !isOwner) return;
+    setDeletingOnboardingStepId(stepId);
+    const { error } = await (supabase as any)
+      .from("server_onboarding_steps")
+      .delete()
+      .eq("id", stepId)
+      .eq("server_id", serverId);
+    setDeletingOnboardingStepId(null);
+    if (error) {
+      alert(`Failed to delete step: ${error.message}`);
+      return;
+    }
+    setOnboardingSteps((prev) => prev.filter((step) => step.id !== stepId));
+  };
+
+  const handleMoveOnboardingStep = async (stepId: string, direction: "up" | "down") => {
+    if (!serverId || !isOwner) return;
+    const currentIndex = onboardingSteps.findIndex((step) => step.id === stepId);
+    if (currentIndex < 0) return;
+    const nextIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (nextIndex < 0 || nextIndex >= onboardingSteps.length) return;
+
+    const reordered = [...onboardingSteps];
+    const [moved] = reordered.splice(currentIndex, 1);
+    reordered.splice(nextIndex, 0, moved);
+    const withPositions = reordered.map((step, index) => ({ ...step, position: index + 1 }));
+    setOnboardingSteps(withPositions);
+    setUpdatingOnboardingStepId(stepId);
+
+    const updates = await Promise.all(
+      withPositions.map((step) =>
+        (supabase as any)
+          .from("server_onboarding_steps")
+          .update({ position: step.position })
+          .eq("id", step.id)
+          .eq("server_id", serverId),
+      ),
+    );
+    setUpdatingOnboardingStepId(null);
+    const failed = updates.find((result: any) => !!result.error);
+    if (failed?.error) {
+      alert(`Failed to reorder steps: ${failed.error.message}`);
+      await loadOnboardingBuilder();
+    }
   };
 
   const handleCreateChannel = async () => {
@@ -1415,6 +1605,171 @@ const ServerSettingsPage = () => {
                 rows={6}
                 className="w-full px-3 py-2 rounded-md bg-background border border-border text-sm outline-none focus:ring-2 focus:ring-primary/50 resize-y"
               />
+            </div>
+            <div className="rounded-md border border-border/60 p-3 bg-secondary/20 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Onboarding Flow Builder</p>
+                <button
+                  onClick={() => void loadOnboardingBuilder()}
+                  className="text-xs px-2 py-1 rounded bg-secondary text-secondary-foreground"
+                >
+                  Refresh
+                </button>
+              </div>
+              {loadingOnboardingBuilder && <p className="text-sm text-muted-foreground">Loading onboarding builder...</p>}
+              {!loadingOnboardingBuilder && (
+                <>
+                  <label className="inline-flex items-center gap-2 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={onboardingFlow.enabled}
+                      onChange={(e) => setOnboardingFlow((prev) => ({ ...prev, enabled: e.target.checked }))}
+                      className="rounded border-border"
+                    />
+                    Enable onboarding flow
+                  </label>
+                  <div>
+                    <label className="text-xs uppercase tracking-wide text-muted-foreground mb-2 block">
+                      Role Assigned On Completion
+                    </label>
+                    <select
+                      value={onboardingFlow.assign_role_on_complete || ""}
+                      onChange={(e) => setOnboardingFlow((prev) => ({ ...prev, assign_role_on_complete: e.target.value || null }))}
+                      className="w-full px-3 py-2 rounded-md bg-background border border-border text-sm"
+                    >
+                      <option value="">No role change</option>
+                      {roles.map((role) => (
+                        <option key={role.id} value={role.name}>{role.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => void handleSaveOnboardingFlow()}
+                      disabled={savingOnboardingFlow}
+                      className="px-3 py-1.5 rounded bg-primary text-primary-foreground text-sm disabled:opacity-50"
+                    >
+                      {savingOnboardingFlow ? "Saving..." : "Save Flow"}
+                    </button>
+                  </div>
+                </>
+              )}
+
+              <div className="rounded-md border border-border/60 p-3 bg-background/70 space-y-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Add Step</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <select
+                    value={newOnboardingStepType}
+                    onChange={(e) => setNewOnboardingStepType(e.target.value as OnboardingStepItem["step_type"])}
+                    className="px-3 py-2 rounded-md bg-background border border-border text-sm"
+                  >
+                    <option value="custom_ack">Custom Acknowledgement</option>
+                    <option value="rules_acceptance">Rules Acceptance</option>
+                    <option value="read_channel">Required Channel Read</option>
+                  </select>
+                  {newOnboardingStepType === "read_channel" && (
+                    <select
+                      value={newOnboardingStepChannelId}
+                      onChange={(e) => setNewOnboardingStepChannelId(e.target.value)}
+                      className="px-3 py-2 rounded-md bg-background border border-border text-sm"
+                    >
+                      <option value="">Select channel</option>
+                      {channels.map((channel) => (
+                        <option key={channel.id} value={channel.id}>#{channel.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                <input
+                  value={newOnboardingStepTitle}
+                  onChange={(e) => setNewOnboardingStepTitle(e.target.value)}
+                  placeholder="Step title"
+                  className="w-full px-3 py-2 rounded-md bg-background border border-border text-sm"
+                />
+                <textarea
+                  value={newOnboardingStepDescription}
+                  onChange={(e) => setNewOnboardingStepDescription(e.target.value)}
+                  rows={2}
+                  placeholder="Step description (optional)"
+                  className="w-full px-3 py-2 rounded-md bg-background border border-border text-sm resize-y"
+                />
+                <label className="inline-flex items-center gap-2 text-sm text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={newOnboardingStepRequired}
+                    onChange={(e) => setNewOnboardingStepRequired(e.target.checked)}
+                    className="rounded border-border"
+                  />
+                  Required step
+                </label>
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => void handleCreateOnboardingStep()}
+                    disabled={creatingOnboardingStep || !newOnboardingStepTitle.trim()}
+                    className="px-3 py-1.5 rounded bg-primary text-primary-foreground text-sm disabled:opacity-50"
+                  >
+                    {creatingOnboardingStep ? "Adding..." : "Add Step"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Current Steps</p>
+                {onboardingSteps.length === 0 && <p className="text-sm text-muted-foreground">No onboarding steps yet.</p>}
+                {onboardingSteps.map((step, idx) => (
+                  <div key={step.id} className="rounded-md border border-border/60 bg-background/70 p-2 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">
+                          {idx + 1}. {step.title}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {step.step_type === "rules_acceptance" && "Rules acceptance"}
+                          {step.step_type === "read_channel" && `Read channel #${channels.find((c) => c.id === step.required_channel_id)?.name || "unknown"}`}
+                          {step.step_type === "custom_ack" && "Custom acknowledgement"}
+                          {step.is_required ? " • Required" : " • Optional"}
+                        </p>
+                        {step.description && (
+                          <p className="text-xs text-foreground mt-1 whitespace-pre-wrap">{step.description}</p>
+                        )}
+                      </div>
+                      <div className="inline-flex items-center gap-1">
+                        <button
+                          onClick={() => void handleMoveOnboardingStep(step.id, "up")}
+                          disabled={idx === 0 || updatingOnboardingStepId === step.id}
+                          className="px-2 py-1 rounded bg-secondary text-secondary-foreground text-xs disabled:opacity-50"
+                        >
+                          Up
+                        </button>
+                        <button
+                          onClick={() => void handleMoveOnboardingStep(step.id, "down")}
+                          disabled={idx === onboardingSteps.length - 1 || updatingOnboardingStepId === step.id}
+                          className="px-2 py-1 rounded bg-secondary text-secondary-foreground text-xs disabled:opacity-50"
+                        >
+                          Down
+                        </button>
+                        <button
+                          onClick={() => void handleDeleteOnboardingStep(step.id)}
+                          disabled={deletingOnboardingStepId === step.id}
+                          className="px-2 py-1 rounded bg-destructive/10 text-destructive text-xs disabled:opacity-50"
+                        >
+                          {deletingOnboardingStepId === step.id ? "Deleting..." : "Delete"}
+                        </button>
+                      </div>
+                    </div>
+                    <label className="inline-flex items-center gap-2 text-xs text-foreground">
+                      <input
+                        type="checkbox"
+                        checked={step.is_required}
+                        onChange={(e) => void handleToggleOnboardingStepRequired(step, e.target.checked)}
+                        disabled={updatingOnboardingStepId === step.id}
+                        className="rounded border-border"
+                      />
+                      Required
+                    </label>
+                  </div>
+                ))}
+              </div>
             </div>
             <label className="flex items-center gap-2 text-sm text-foreground">
               <input

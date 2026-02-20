@@ -5,6 +5,7 @@ import { Hash, Volume2, ChevronDown, Settings, Mic, Headphones, UserPlus, LogOut
 import StatusIndicator from "./StatusIndicator";
 import InviteDialog from "./InviteDialog";
 import ProfileDialog from "./ProfileDialog";
+import NotificationBell from "./NotificationBell";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/AuthContext";
 import { useVoiceContext } from "@/context/VoiceContext";
@@ -256,22 +257,26 @@ const ChannelSidebar = () => {
       </div>
 
       {/* User panel */}
-      <div className="h-[52px] px-2 flex items-center gap-2 bg-server-bar">
-        <button onClick={() => setShowProfile(true)} className="relative">
-          <div className="w-8 h-8 rounded-full overflow-hidden bg-primary flex items-center justify-center text-xs font-semibold text-primary-foreground">
-            {profile?.avatar_url ? (
-              <img src={profile.avatar_url} alt={profile.display_name} className="w-full h-full object-cover" />
-            ) : (
-              <span>{profile?.display_name?.slice(0, 2).toUpperCase() || "??"}</span>
-            )}
+      <div className="relative z-20 -ml-[72px] w-[calc(100%+72px)] h-[52px] px-2 bg-server-bar flex items-center justify-between">
+        <div className="flex items-center gap-2 min-w-0">
+          <button onClick={() => setShowProfile(true)} className="relative shrink-0">
+            <div className="w-8 h-8 rounded-full overflow-hidden bg-primary flex items-center justify-center text-xs font-semibold text-primary-foreground">
+              {profile?.avatar_url ? (
+                <img src={profile.avatar_url} alt={profile.display_name} className="w-full h-full object-cover" />
+              ) : (
+                <span>{profile?.display_name?.slice(0, 2).toUpperCase() || "??"}</span>
+              )}
+            </div>
+            <StatusIndicator status={(profile?.status as "online" | "idle" | "dnd" | "offline") || "online"} className="absolute -bottom-0.5 -right-0.5" />
+          </button>
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-foreground truncate leading-tight">{profile?.display_name}</p>
+            <p className="text-[10px] text-muted-foreground leading-tight capitalize">{profile?.status || "Online"}</p>
           </div>
-          <StatusIndicator status={(profile?.status as "online" | "idle" | "dnd" | "offline") || "online"} className="absolute -bottom-0.5 -right-0.5" />
-        </button>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-foreground truncate leading-tight">{profile?.display_name}</p>
-          <p className="text-[10px] text-muted-foreground leading-tight capitalize">{profile?.status || "Online"}</p>
+          <NotificationBell />
         </div>
-        <div className="flex gap-1">
+
+        <div className="flex items-center gap-1 shrink-0">
           <button
             onClick={toggleMute}
             className={`p-1 transition-colors ${isMuted ? "text-destructive" : "text-muted-foreground hover:text-foreground"}`}
