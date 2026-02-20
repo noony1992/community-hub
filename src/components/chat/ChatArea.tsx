@@ -1196,7 +1196,10 @@ const ChatArea = () => {
   useEffect(() => {
     if (!expandedVideoUserId) return;
     const hasExpandedVideo = participants.some(
-      (participant) => participant.userId === expandedVideoUserId && !!videoStreamsByUser[participant.userId],
+      (participant) =>
+        participant.userId === expandedVideoUserId &&
+        !!videoStreamsByUser[participant.userId] &&
+        (participant.cameraOn || participant.screenSharing),
     );
     if (!hasExpandedVideo) setExpandedVideoUserId(null);
   }, [expandedVideoUserId, participants, videoStreamsByUser]);
@@ -1245,7 +1248,10 @@ const ChatArea = () => {
               ? "w-20 h-20 text-lg"
               : "w-16 h-16 text-base";
     const hasExpandedVideoCard = !!expandedVideoUserId && orderedVisibleParticipants.some(
-      (participant) => participant.userId === expandedVideoUserId && !!videoStreamsByUser[participant.userId],
+      (participant) =>
+        participant.userId === expandedVideoUserId &&
+        !!videoStreamsByUser[participant.userId] &&
+        (participant.cameraOn || participant.screenSharing),
     );
     const voiceExpandedCardHeightClass = participantCount <= 4
       ? "h-[min(72vh,760px)]"
@@ -1300,7 +1306,7 @@ const ChatArea = () => {
                 {orderedVisibleParticipants.map((p) => {
                   const profile = memberMap[p.userId];
                   const participantVideoStream = videoStreamsByUser[p.userId];
-                  const hasVideoStream = !!participantVideoStream;
+                  const hasVideoStream = !!participantVideoStream && (p.cameraOn || p.screenSharing);
                   const isVideoExpanded = hasVideoStream && expandedVideoUserId === p.userId;
                   const expandedCardSpan = hasExpandedVideoCard
                     ? (voiceGridColumns >= 3 ? voiceGridColumns - 1 : voiceGridColumns)

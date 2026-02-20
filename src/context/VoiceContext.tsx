@@ -88,6 +88,7 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const speakingStateRef = useRef<Record<string, boolean>>({});
   const speakingLoopRef = useRef<Map<string, number>>(new Map());
   const speakingCleanupRef = useRef<Map<string, () => void>>(new Map());
+  const videoRecoveryRequestAtRef = useRef<Record<string, number>>({});
   const isMutedRef = useRef(false);
   const isDeafenedRef = useRef(false);
   const isForcedMutedRef = useRef(false);
@@ -190,6 +191,7 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       delete next[userId];
       return next;
     });
+    delete videoRecoveryRequestAtRef.current[userId];
   }, []);
 
   const startSpeakingDetection = useCallback((userId: string, stream: MediaStream) => {
@@ -267,6 +269,7 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     speakingCleanupRef.current.forEach((cleanup) => cleanup());
     speakingCleanupRef.current.clear();
     speakingStateRef.current = {};
+    videoRecoveryRequestAtRef.current = {};
 
     if (signalChannelRef.current) {
       signalChannelRef.current.untrack();
@@ -499,13 +502,15 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const [stream] = event.streams;
         if (!stream) return;
         remoteStreamsRef.current.set(targetUserId, stream);
-        if (stream.getAudioTracks().length > 0) {
+        if (event.track.kind === "audio" || stream.getAudioTracks().length > 0) {
           ensureAudioElement(targetUserId, stream);
           startSpeakingDetection(targetUserId, stream);
         }
 
         const syncVideoState = () => {
-          const hasLiveVideo = stream.getVideoTracks().some((track) => track.readyState === "live");
+          const hasLiveVideo = stream.getVideoTracks().some(
+            (track) => track.readyState === "live" && !track.muted && track.enabled,
+          );
           setVideoStreamsByUser((prev) => {
             if (hasLiveVideo) {
               if (prev[targetUserId] === stream) return prev;
@@ -519,6 +524,8 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         };
 
         syncVideoState();
+        stream.onaddtrack = syncVideoState;
+        stream.onremovetrack = syncVideoState;
         stream.getVideoTracks().forEach((track) => {
           track.onended = syncVideoState;
           track.onmute = syncVideoState;
@@ -577,7 +584,26 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     setParticipants(all);
 
-    const remoteIds = all.filter((p) => !p.self).map((p) => p.userId);
+    const remoteParticipants = all.filter((p) => !p.self);
+    const remoteIds = remoteParticipants.map((p) => p.userId);
+    const remoteUsersPublishingVideo = new Set(
+      remoteParticipants
+        .filter((p) => p.cameraOn || p.screenSharing)
+        .map((p) => p.userId),
+    );
+
+    setVideoStreamsByUser((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      Object.keys(next).forEach((uid) => {
+        if (uid === user.id) return;
+        if (!remoteUsersPublishingVideo.has(uid)) {
+          delete next[uid];
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
 
     remoteIds.forEach((remoteId) => {
       if (!peersRef.current.has(remoteId)) {
@@ -587,9 +613,30 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
 
     Array.from(peersRef.current.keys()).forEach((peerId) => {
-      if (!remoteIds.includes(peerId)) removePeer(peerId);
+      if (!remoteIds.includes(peerId)) {
+        removePeer(peerId);
+        delete videoRecoveryRequestAtRef.current[peerId];
+      }
     });
-  }, [createPeer, removePeer, user]);
+
+    remoteParticipants.forEach((participant) => {
+      if (!(participant.cameraOn || participant.screenSharing)) return;
+      const pc = peersRef.current.get(participant.userId);
+      if (!pc || ["closed", "failed"].includes(pc.connectionState)) return;
+
+      const remoteStream = remoteStreamsRef.current.get(participant.userId);
+      const hasLiveVideo = !!remoteStream?.getVideoTracks().some(
+        (track) => track.readyState === "live" && !track.muted && track.enabled,
+      );
+      if (hasLiveVideo) return;
+
+      const now = Date.now();
+      const lastRequestAt = videoRecoveryRequestAtRef.current[participant.userId] || 0;
+      if (now - lastRequestAt < 1800) return;
+      videoRecoveryRequestAtRef.current[participant.userId] = now;
+      renegotiatePeer(participant.userId, pc);
+    });
+  }, [createPeer, removePeer, renegotiatePeer, user]);
 
   const joinVoiceChannel = useCallback(
     async (channelId: string) => {
