@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useChatContext } from "@/context/ChatContext";
-import { Hash, Volume2, ChevronDown, Settings, Mic, Headphones, UserPlus, LogOut, PhoneOff } from "lucide-react";
+import { Hash, Volume2, ChevronDown, Settings, Mic, Headphones, UserPlus, LogOut, PhoneOff, Video, VideoOff, ScreenShare, ScreenShareOff } from "lucide-react";
 import StatusIndicator from "./StatusIndicator";
 import InviteDialog from "./InviteDialog";
 import ProfileDialog from "./ProfileDialog";
@@ -31,7 +31,21 @@ const ChannelSidebar = () => {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { activeServerId, activeChannelId, setActiveChannel, channels, channelGroups, servers, profile, members, refreshServers, unreadCountByChannel } = useChatContext();
-  const { activeVoiceChannelId, isConnected, isMuted, isDeafened, voiceLatencyMs, joinVoiceChannel, leaveVoiceChannel, toggleMute, toggleDeafen } = useVoiceContext();
+  const {
+    activeVoiceChannelId,
+    isConnected,
+    isMuted,
+    isDeafened,
+    isCameraOn,
+    isScreenSharing,
+    voiceLatencyMs,
+    joinVoiceChannel,
+    leaveVoiceChannel,
+    toggleMute,
+    toggleDeafen,
+    toggleCamera,
+    toggleScreenShare,
+  } = useVoiceContext();
   const server = servers.find((s) => s.id === activeServerId);
   const [showInvite, setShowInvite] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -295,6 +309,18 @@ const ChannelSidebar = () => {
               <span className="truncate leading-tight">
                 Connected to voice: <span className="text-primary">#{activeVoiceChannel.name}</span>
               </span>
+              {isCameraOn && (
+                <span className="inline-flex items-center gap-1 rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+                  <Video className="w-3 h-3" />
+                  Camera
+                </span>
+              )}
+              {isScreenSharing && (
+                <span className="inline-flex items-center gap-1 rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+                  <ScreenShare className="w-3 h-3" />
+                  Screen
+                </span>
+              )}
             </div>
             <button
               onClick={() => void leaveVoiceChannel()}
@@ -341,6 +367,26 @@ const ChannelSidebar = () => {
             title={isDeafened ? "Undeafen" : "Deafen"}
           >
             <Headphones className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => void toggleCamera()}
+            disabled={!isConnected}
+            className={`p-1 transition-colors disabled:opacity-40 ${
+              isCameraOn ? "text-primary" : "text-muted-foreground hover:text-foreground"
+            }`}
+            title={isCameraOn ? "Turn camera off" : "Turn camera on"}
+          >
+            {isCameraOn ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />}
+          </button>
+          <button
+            onClick={() => void toggleScreenShare()}
+            disabled={!isConnected}
+            className={`p-1 transition-colors disabled:opacity-40 ${
+              isScreenSharing ? "text-primary" : "text-muted-foreground hover:text-foreground"
+            }`}
+            title={isScreenSharing ? "Stop screen share" : "Share screen"}
+          >
+            {isScreenSharing ? <ScreenShareOff className="w-4 h-4" /> : <ScreenShare className="w-4 h-4" />}
           </button>
           <button onClick={() => setShowProfile(true)} className="p-1 text-muted-foreground hover:text-foreground transition-colors"><Settings className="w-4 h-4" /></button>
           <button

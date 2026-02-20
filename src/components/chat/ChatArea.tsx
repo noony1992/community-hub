@@ -2,7 +2,7 @@ import { Fragment, useState, useRef, useEffect, useMemo, useCallback } from "rea
 import { useChatContext, type Message } from "@/context/ChatContext";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { Hash, Pin, Users, Search, Inbox, HelpCircle, PlusCircle, Gift, Smile, SendHorizonal, Pencil, Trash2, X, Check, Paperclip, FileIcon, ImageIcon, MessageSquare, Reply, Volume2, PhoneOff, CalendarClock, Megaphone, BarChart3, CalendarDays, MicOff, UserX } from "lucide-react";
+import { Hash, Pin, Users, Search, Inbox, HelpCircle, PlusCircle, Gift, Smile, SendHorizonal, Pencil, Trash2, X, Check, Paperclip, FileIcon, ImageIcon, MessageSquare, Reply, Volume2, PhoneOff, CalendarClock, Megaphone, BarChart3, CalendarDays, MicOff, UserX, Video, VideoOff, ScreenShare, ScreenShareOff, Maximize2 } from "lucide-react";
 import { format, isSameDay, isToday, isYesterday } from "date-fns";
 import { toast } from "sonner";
 import EmojiPicker from "./EmojiPicker";
@@ -55,7 +55,18 @@ const ChatArea = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const { activeChannelId, activeServerId, channels, messages, sendMessage, scheduleMessage, editMessage, deleteMessage, members, profile, typingUsers, setTyping, addReaction, pinMessage, unpinMessage, moderationState, servers, unreadCountByChannel, channelLastReadAtByChannel, markChannelAsRead, setActiveChannel } = useChatContext();
-  const { isConnected, activeVoiceChannelId, participants, leaveVoiceChannel, moderateVoiceParticipant } = useVoiceContext();
+  const {
+    isConnected,
+    activeVoiceChannelId,
+    participants,
+    videoStreamsByUser,
+    isCameraOn,
+    isScreenSharing,
+    leaveVoiceChannel,
+    moderateVoiceParticipant,
+    toggleCamera,
+    toggleScreenShare,
+  } = useVoiceContext();
   const [input, setInput] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
@@ -110,12 +121,14 @@ const ChatArea = () => {
   const [eventEndsAt, setEventEndsAt] = useState("");
   const [rsvpSavingEventId, setRsvpSavingEventId] = useState<string | null>(null);
   const [moveVoiceTargetByUser, setMoveVoiceTargetByUser] = useState<Record<string, string>>({});
+  const [expandedVideoUserId, setExpandedVideoUserId] = useState<string | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const restrictionToastAtRef = useRef<number>(0);
+  const voiceVideoContainerRefByUser = useRef<Record<string, HTMLDivElement | null>>({});
 
   const channel = channels.find((c) => c.id === activeChannelId);
   const isVoiceChannelView = channel?.type === "voice";
@@ -1144,6 +1157,30 @@ const ChatArea = () => {
     [moderateVoiceParticipant],
   );
 
+  const handleToggleExpandedVideoCard = useCallback((userId: string) => {
+    setExpandedVideoUserId((prev) => (prev === userId ? null : userId));
+  }, []);
+
+  const handleFullscreenVideoCard = useCallback((userId: string) => {
+    const element = voiceVideoContainerRefByUser.current[userId];
+    if (!element) return;
+    const compatElement = element as HTMLDivElement & {
+      webkitRequestFullscreen?: () => Promise<void> | void;
+      msRequestFullscreen?: () => Promise<void> | void;
+    };
+    if (element.requestFullscreen) {
+      void element.requestFullscreen().catch(() => undefined);
+      return;
+    }
+    if (compatElement.webkitRequestFullscreen) {
+      void compatElement.webkitRequestFullscreen();
+      return;
+    }
+    if (compatElement.msRequestFullscreen) {
+      void compatElement.msRequestFullscreen();
+    }
+  }, []);
+
   useEffect(() => {
     if (!activeChannelId || activeUnreadCount === 0) return;
     if (isNearBottom()) {
@@ -1153,7 +1190,16 @@ const ChatArea = () => {
 
   useEffect(() => {
     setMoveVoiceTargetByUser({});
+    setExpandedVideoUserId(null);
   }, [activeChannelId]);
+
+  useEffect(() => {
+    if (!expandedVideoUserId) return;
+    const hasExpandedVideo = participants.some(
+      (participant) => participant.userId === expandedVideoUserId && !!videoStreamsByUser[participant.userId],
+    );
+    if (!hasExpandedVideo) setExpandedVideoUserId(null);
+  }, [expandedVideoUserId, participants, videoStreamsByUser]);
 
   useEffect(() => {
     if (!activeVoiceChannelId || !activeChannelId) return;
@@ -1166,11 +1212,51 @@ const ChatArea = () => {
   if (isVoiceChannelView) {
     const connectedToSelected = isConnected && activeVoiceChannelId === activeChannelId;
     const visibleParticipants = connectedToSelected ? participants : [];
+    const orderedVisibleParticipants = expandedVideoUserId
+      ? [...visibleParticipants].sort((a, b) => {
+          if (a.userId === expandedVideoUserId) return -1;
+          if (b.userId === expandedVideoUserId) return 1;
+          return 0;
+        })
+      : visibleParticipants;
     const speakingCount = visibleParticipants.filter((p) => p.speaking).length;
+    const participantCount = visibleParticipants.length;
+    const voiceGridColumns = participantCount <= 1 ? 1 : participantCount <= 4 ? 2 : participantCount <= 9 ? 3 : 4;
+    const voiceCardHeightClass = participantCount <= 1
+      ? "h-[420px]"
+      : participantCount <= 2
+        ? "h-[360px]"
+        : participantCount <= 4
+          ? "h-[310px]"
+          : participantCount <= 6
+            ? "h-[270px]"
+            : participantCount <= 9
+              ? "h-[230px]"
+              : "h-[200px]";
+    const voiceAvatarSizeClass = participantCount <= 1
+      ? "w-36 h-36 text-3xl"
+      : participantCount <= 2
+        ? "w-32 h-32 text-2xl"
+        : participantCount <= 4
+          ? "w-28 h-28 text-2xl"
+          : participantCount <= 6
+            ? "w-24 h-24 text-xl"
+            : participantCount <= 9
+              ? "w-20 h-20 text-lg"
+              : "w-16 h-16 text-base";
+    const hasExpandedVideoCard = !!expandedVideoUserId && orderedVisibleParticipants.some(
+      (participant) => participant.userId === expandedVideoUserId && !!videoStreamsByUser[participant.userId],
+    );
+    const voiceExpandedCardHeightClass = participantCount <= 4
+      ? "h-[min(72vh,760px)]"
+      : participantCount <= 9
+        ? "h-[min(66vh,680px)]"
+        : "h-[min(60vh,620px)]";
+    const voiceCompactCardHeightClass = "h-[120px]";
 
     return (
       <div className="flex flex-1 min-w-0 bg-chat-area">
-        <div className="flex flex-col flex-1 min-w-0">
+        <div className="relative flex flex-col flex-1 min-w-0">
           <div className="h-14 px-4 flex items-center justify-between border-b border-border/50 shrink-0 bg-gradient-to-r from-secondary/25 via-secondary/10 to-transparent">
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-8 h-8 rounded-lg bg-primary/15 border border-primary/30 flex items-center justify-center shrink-0">
@@ -1191,19 +1277,10 @@ const ChatArea = () => {
                   Live
                 </span>
               )}
-              {connectedToSelected && (
-                <button
-                  onClick={() => void leaveVoiceChannel()}
-                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                >
-                  <PhoneOff className="w-3.5 h-3.5" />
-                  Leave
-                </button>
-              )}
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4">
+          <div className="flex-1 overflow-y-auto p-4 pb-24">
             {!connectedToSelected && (
               <div className="h-full flex items-center justify-center">
                 <div className="text-center text-muted-foreground rounded-xl border border-border/60 bg-card/70 px-8 py-10 max-w-md">
@@ -1215,13 +1292,34 @@ const ChatArea = () => {
             )}
 
             {connectedToSelected && (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                {visibleParticipants.map((p) => {
+              <div className={`grid h-full w-full gap-4 ${hasExpandedVideoCard ? "content-start" : "content-center"}`}>
+                <div
+                  className="grid w-full gap-4"
+                  style={{ gridTemplateColumns: `repeat(${voiceGridColumns}, minmax(0, 1fr))` }}
+                >
+                {orderedVisibleParticipants.map((p) => {
                   const profile = memberMap[p.userId];
+                  const participantVideoStream = videoStreamsByUser[p.userId];
+                  const hasVideoStream = !!participantVideoStream;
+                  const isVideoExpanded = hasVideoStream && expandedVideoUserId === p.userId;
+                  const expandedCardSpan = hasExpandedVideoCard
+                    ? (voiceGridColumns >= 3 ? voiceGridColumns - 1 : voiceGridColumns)
+                    : (voiceGridColumns > 1 ? Math.min(2, voiceGridColumns) : 1);
+                  const expandedCardStyle = isVideoExpanded
+                    ? {
+                        gridColumn: `span ${expandedCardSpan} / span ${expandedCardSpan}`,
+                        gridRow: `span ${hasExpandedVideoCard ? 3 : 2} / span ${hasExpandedVideoCard ? 3 : 2}`,
+                      }
+                    : undefined;
+                  const defaultCardHeightClass = hasExpandedVideoCard && !isVideoExpanded
+                    ? voiceCompactCardHeightClass
+                    : voiceCardHeightClass;
+                  const cardHeightClass = isVideoExpanded ? voiceExpandedCardHeightClass : defaultCardHeightClass;
                   const initials = p.displayName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
                   const isTargetOwner = activeServer?.owner_id === p.userId;
                   const canActOnParticipant = !p.self && !isTargetOwner;
                   const moveTarget = getVoiceMoveTarget(p.userId);
+                  const displayName = `${p.displayName}${p.self ? " (You)" : ""}`;
                   const stateLabel = p.deafened
                     ? "Deafened"
                     : p.forcedMuted
@@ -1236,98 +1334,295 @@ const ChatArea = () => {
                     : p.speaking
                       ? "text-status-online"
                       : "text-muted-foreground";
+                  const videoStateBadgeClass = p.deafened || p.forcedMuted
+                    ? "text-destructive border-destructive/40 bg-destructive/20"
+                    : p.speaking
+                      ? "text-status-online border-status-online/40 bg-status-online/15"
+                      : "text-white/85 border-white/30 bg-black/35";
                   return (
-                    <div key={p.userId} className="rounded-xl border border-border/60 bg-gradient-to-br from-card via-card to-secondary/20 p-3 space-y-2 shadow-sm">
-                      <div className="flex items-center gap-3">
-                        {profile?.avatar_url ? (
-                          <img
-                            src={profile.avatar_url}
-                            alt={p.displayName}
-                            className={`w-10 h-10 rounded-full object-cover ring-2 ${
-                              p.speaking ? "ring-status-online/60" : "ring-border/70"
-                            }`}
-                          />
-                        ) : (
-                          <div className={`w-10 h-10 rounded-full bg-secondary flex items-center justify-center text-xs font-semibold text-foreground ring-2 ${
-                            p.speaking ? "ring-status-online/60" : "ring-border/70"
-                          }`}>
-                            {initials}
-                          </div>
-                        )}
-                        <div className="min-w-0">
-                          <p className={`text-sm truncate ${p.self ? "font-semibold text-foreground" : "text-foreground"}`}>
-                            {p.displayName}{p.self ? " (You)" : ""}
-                          </p>
-                          <p className={`text-xs ${stateClass}`}>
-                            {stateLabel}
-                          </p>
-                        </div>
-                        <div className="ml-auto flex items-center gap-1">
-                          {p.forcedMuted && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-destructive/15 text-destructive border border-destructive/30">
-                              Forced
-                            </span>
-                          )}
-                          {p.muted && !p.forcedMuted && (
-                            <MicOff className="w-3.5 h-3.5 text-muted-foreground" />
-                          )}
-                        </div>
-                      </div>
-                      {canModerateVoiceUsers && canActOnParticipant && (
-                        <div className="pt-2 border-t border-border/50 flex flex-wrap items-center gap-1.5">
-                          {canVoiceMuteUsers && (
-                            <button
-                              onClick={() => void handleModerateVoiceParticipant(p.userId, p.forcedMuted ? "force_unmute" : "force_mute")}
-                              className={`px-2 py-1 rounded text-xs border ${
-                                p.forcedMuted
-                                  ? "border-primary/50 text-primary hover:bg-primary/10"
-                                  : "border-border bg-background/70 text-muted-foreground hover:text-foreground"
-                              }`}
-                            >
-                              {p.forcedMuted ? "Unmute" : "Mute"}
-                            </button>
-                          )}
-                          {canVoiceKickUsers && (
-                            <button
-                              onClick={() => void handleModerateVoiceParticipant(p.userId, "kick")}
-                              className="px-2 py-1 rounded text-xs border border-border bg-background/70 text-muted-foreground hover:text-destructive inline-flex items-center gap-1"
-                            >
-                              <UserX className="w-3 h-3" />
-                              Kick
-                            </button>
-                          )}
-                          {canMoveVoiceUsers && voiceChannelOptions.length > 1 && (
-                            <div className="ml-auto flex items-center gap-1">
-                              <select
-                                value={moveTarget}
-                                onChange={(e) => setMoveVoiceTargetByUser((prev) => ({ ...prev, [p.userId]: e.target.value }))}
-                                className="px-1.5 py-1 rounded bg-background border border-border text-[11px] text-foreground"
-                              >
-                                {voiceChannelOptions
-                                  .filter((voiceChannel) => voiceChannel.id !== activeVoiceChannelId)
-                                  .map((voiceChannel) => (
-                                    <option key={`${p.userId}-${voiceChannel.id}`} value={voiceChannel.id}>
-                                      #{voiceChannel.name}
-                                    </option>
-                                  ))}
-                              </select>
+                    <div
+                      key={p.userId}
+                      onDoubleClick={() => {
+                        if (!hasVideoStream) return;
+                        handleToggleExpandedVideoCard(p.userId);
+                      }}
+                      style={expandedCardStyle}
+                      className={`group relative overflow-hidden rounded-2xl border border-border/60 shadow-sm flex flex-col ${cardHeightClass} ${
+                        hasVideoStream ? "bg-black p-0" : "bg-gradient-to-br from-card via-card to-secondary/20 p-3"
+                      } ${
+                        hasVideoStream ? (isVideoExpanded ? "cursor-zoom-out ring-2 ring-primary/40" : "cursor-zoom-in") : ""
+                      }`}
+                    >
+                      {hasVideoStream ? (
+                        <>
+                          <div className="relative h-full w-full overflow-hidden" ref={(el) => { voiceVideoContainerRefByUser.current[p.userId] = el; }}>
+                            <video
+                              ref={(el) => {
+                                if (!el || el.srcObject === participantVideoStream) return;
+                                el.srcObject = participantVideoStream;
+                              }}
+                              autoPlay
+                              playsInline
+                              muted
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/75 via-black/10 to-black/25" />
+                            <div className="absolute left-3 bottom-3 z-10 min-w-0 max-w-[75%]">
+                              <p className="text-sm font-medium text-white truncate">
+                                {displayName}
+                              </p>
+                            </div>
+                            <div className="absolute right-2 top-2 z-20 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                               <button
-                                onClick={() => void handleModerateVoiceParticipant(p.userId, "move", moveTarget)}
-                                disabled={!moveTarget}
-                                className="px-2 py-1 rounded text-xs border border-border text-muted-foreground hover:text-foreground disabled:opacity-50"
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleFullscreenVideoCard(p.userId);
+                                }}
+                                className="inline-flex items-center gap-1 rounded-md border border-white/30 bg-black/45 px-1.5 py-1 text-[11px] text-white hover:bg-black/60"
+                                title="Fullscreen"
                               >
-                                Move
+                                <Maximize2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
+                            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 p-3 opacity-0 transition-opacity group-hover:opacity-100">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className={`text-[11px] px-1.5 py-0.5 rounded border ${videoStateBadgeClass}`}>
+                                  {stateLabel}
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  {p.forcedMuted && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-destructive/25 text-destructive border border-destructive/35">
+                                      Forced
+                                    </span>
+                                  )}
+                                  {p.cameraOn && !p.screenSharing && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-white/30 bg-black/45 text-white">
+                                      Camera
+                                    </span>
+                                  )}
+                                  {p.screenSharing && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-white/30 bg-black/45 text-white">
+                                      Screen
+                                    </span>
+                                  )}
+                                  {p.muted && !p.forcedMuted && (
+                                    <MicOff className="w-3.5 h-3.5 text-white/85" />
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          {canModerateVoiceUsers && canActOnParticipant && (
+                            <div className="pointer-events-none absolute inset-x-0 top-0 z-30 p-2 opacity-0 transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto">
+                              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                                {canVoiceMuteUsers && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void handleModerateVoiceParticipant(p.userId, p.forcedMuted ? "force_unmute" : "force_mute");
+                                    }}
+                                    className={`px-2 py-1 rounded text-xs border ${
+                                      p.forcedMuted
+                                        ? "border-primary/60 text-primary bg-primary/20 hover:bg-primary/30"
+                                        : "border-white/35 text-white bg-black/45 hover:bg-black/65"
+                                    }`}
+                                  >
+                                    {p.forcedMuted ? "Unmute" : "Mute"}
+                                  </button>
+                                )}
+                                {canVoiceKickUsers && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void handleModerateVoiceParticipant(p.userId, "kick");
+                                    }}
+                                    className="px-2 py-1 rounded text-xs border border-white/35 bg-black/45 text-white hover:text-destructive hover:bg-black/65 inline-flex items-center gap-1"
+                                  >
+                                    <UserX className="w-3 h-3" />
+                                    Kick
+                                  </button>
+                                )}
+                                {canMoveVoiceUsers && voiceChannelOptions.length > 1 && (
+                                  <div className="flex items-center gap-1">
+                                    <select
+                                      value={moveTarget}
+                                      onClick={(e) => e.stopPropagation()}
+                                      onChange={(e) => setMoveVoiceTargetByUser((prev) => ({ ...prev, [p.userId]: e.target.value }))}
+                                      className="px-1.5 py-1 rounded bg-black/55 border border-white/35 text-[11px] text-white"
+                                    >
+                                      {voiceChannelOptions
+                                        .filter((voiceChannel) => voiceChannel.id !== activeVoiceChannelId)
+                                        .map((voiceChannel) => (
+                                          <option key={`${p.userId}-${voiceChannel.id}`} value={voiceChannel.id}>
+                                            #{voiceChannel.name}
+                                          </option>
+                                        ))}
+                                    </select>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void handleModerateVoiceParticipant(p.userId, "move", moveTarget);
+                                      }}
+                                      disabled={!moveTarget}
+                                      className="px-2 py-1 rounded text-xs border border-white/35 text-white hover:bg-black/65 disabled:opacity-50"
+                                    >
+                                      Move
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
                           )}
-                        </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="relative z-10 flex items-center justify-between gap-2">
+                            <span className={`text-[11px] px-1.5 py-0.5 rounded border bg-secondary/60 border-border/60 ${stateClass}`}>
+                              {stateLabel}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              {p.forcedMuted && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-destructive/15 text-destructive border border-destructive/30">
+                                  Forced
+                                </span>
+                              )}
+                              {p.muted && !p.forcedMuted && (
+                                <MicOff className="w-3.5 h-3.5 text-muted-foreground" />
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="relative z-10 flex flex-1 items-center justify-center">
+                            {profile?.avatar_url ? (
+                              <img
+                                src={profile.avatar_url}
+                                alt={p.displayName}
+                                className={`${voiceAvatarSizeClass} rounded-full object-cover ring-4 shadow-xl ${
+                                  p.speaking ? "ring-status-online/70" : "ring-border/70"
+                                }`}
+                              />
+                            ) : (
+                              <div className={`${voiceAvatarSizeClass} rounded-full bg-secondary flex items-center justify-center font-semibold text-foreground ring-4 shadow-xl ${
+                                p.speaking ? "ring-status-online/70" : "ring-border/70"
+                              }`}>
+                                {initials}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="relative z-10 mt-1 text-center">
+                            <p className={`text-sm truncate text-foreground ${p.self ? "font-semibold" : ""}`}>
+                              {displayName}
+                            </p>
+                            <div className="mt-1 flex items-center justify-center gap-1">
+                              {p.cameraOn && !p.screenSharing && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded border bg-primary/15 text-primary border-primary/30">
+                                  Camera
+                                </span>
+                              )}
+                              {p.screenSharing && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded border bg-primary/15 text-primary border-primary/30">
+                                  Screen
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {canModerateVoiceUsers && canActOnParticipant && (
+                            <div className="relative z-10 mt-3 pt-2 border-t border-border/50 flex flex-wrap items-center gap-1.5">
+                              {canVoiceMuteUsers && (
+                                <button
+                                  onClick={() => void handleModerateVoiceParticipant(p.userId, p.forcedMuted ? "force_unmute" : "force_mute")}
+                                  className={`px-2 py-1 rounded text-xs border ${
+                                    p.forcedMuted
+                                      ? "border-primary/50 text-primary hover:bg-primary/10"
+                                      : "border-border bg-background/70 text-muted-foreground hover:text-foreground"
+                                  }`}
+                                >
+                                  {p.forcedMuted ? "Unmute" : "Mute"}
+                                </button>
+                              )}
+                              {canVoiceKickUsers && (
+                                <button
+                                  onClick={() => void handleModerateVoiceParticipant(p.userId, "kick")}
+                                  className="px-2 py-1 rounded text-xs border border-border bg-background/70 text-muted-foreground hover:text-destructive inline-flex items-center gap-1"
+                                >
+                                  <UserX className="w-3 h-3" />
+                                  Kick
+                                </button>
+                              )}
+                              {canMoveVoiceUsers && voiceChannelOptions.length > 1 && (
+                                <div className="ml-auto flex items-center gap-1">
+                                  <select
+                                    value={moveTarget}
+                                    onChange={(e) => setMoveVoiceTargetByUser((prev) => ({ ...prev, [p.userId]: e.target.value }))}
+                                    className="px-1.5 py-1 rounded bg-background border border-border text-[11px] text-foreground"
+                                  >
+                                    {voiceChannelOptions
+                                      .filter((voiceChannel) => voiceChannel.id !== activeVoiceChannelId)
+                                      .map((voiceChannel) => (
+                                        <option key={`${p.userId}-${voiceChannel.id}`} value={voiceChannel.id}>
+                                          #{voiceChannel.name}
+                                        </option>
+                                      ))}
+                                  </select>
+                                  <button
+                                    onClick={() => void handleModerateVoiceParticipant(p.userId, "move", moveTarget)}
+                                    disabled={!moveTarget}
+                                    className="px-2 py-1 rounded text-xs border border-border text-muted-foreground hover:text-foreground disabled:opacity-50"
+                                  >
+                                    Move
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   );
                 })}
+                </div>
               </div>
             )}
           </div>
+          {connectedToSelected && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center px-4">
+              <div className="pointer-events-auto rounded-lg border border-border/50 bg-gradient-to-r from-server-bar via-secondary/20 to-server-bar px-3 py-2 flex items-center gap-2 shadow-sm">
+                <button
+                  onClick={() => void toggleCamera()}
+                  className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs border transition-colors ${
+                    isCameraOn
+                      ? "border-primary/50 text-primary bg-primary/10"
+                      : "border-border text-muted-foreground hover:text-foreground"
+                  }`}
+                  title={isCameraOn ? "Turn camera off" : "Turn camera on"}
+                >
+                  {isCameraOn ? <VideoOff className="w-3.5 h-3.5" /> : <Video className="w-3.5 h-3.5" />}
+                  Camera
+                </button>
+                <button
+                  onClick={() => void toggleScreenShare()}
+                  className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs border transition-colors ${
+                    isScreenSharing
+                      ? "border-primary/50 text-primary bg-primary/10"
+                      : "border-border text-muted-foreground hover:text-foreground"
+                  }`}
+                  title={isScreenSharing ? "Stop screen share" : "Share screen"}
+                >
+                  {isScreenSharing ? <ScreenShareOff className="w-3.5 h-3.5" /> : <ScreenShare className="w-3.5 h-3.5" />}
+                  Screen
+                </button>
+                <button
+                  onClick={() => void leaveVoiceChannel()}
+                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                >
+                  <PhoneOff className="w-3.5 h-3.5" />
+                  Leave
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );

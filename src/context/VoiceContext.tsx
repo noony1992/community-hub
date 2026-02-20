@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/AuthContext";
 import type { RealtimeChannel } from "@supabase/supabase-js";
+import { toast } from "sonner";
 
 interface VoiceParticipant {
   userId: string;
@@ -9,6 +10,8 @@ interface VoiceParticipant {
   muted: boolean;
   deafened: boolean;
   forcedMuted: boolean;
+  cameraOn: boolean;
+  screenSharing: boolean;
   speaking: boolean;
   self: boolean;
 }
@@ -18,15 +21,20 @@ type VoiceModerationAction = "kick" | "force_mute" | "force_unmute" | "move";
 interface VoiceState {
   activeVoiceChannelId: string | null;
   participants: VoiceParticipant[];
+  videoStreamsByUser: Record<string, MediaStream>;
   isConnected: boolean;
   isMuted: boolean;
   isDeafened: boolean;
+  isCameraOn: boolean;
+  isScreenSharing: boolean;
   voiceLatencyMs: number | null;
   moderateVoiceParticipant: (targetUserId: string, action: VoiceModerationAction, targetChannelId?: string) => Promise<void>;
   joinVoiceChannel: (channelId: string) => Promise<void>;
   leaveVoiceChannel: () => Promise<void>;
   toggleMute: () => void;
   toggleDeafen: () => void;
+  toggleCamera: () => Promise<void>;
+  toggleScreenShare: () => Promise<void>;
 }
 
 const VoiceContext = createContext<VoiceState | null>(null);
@@ -61,11 +69,19 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [isConnected, setIsConnected] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
+  const [videoStreamsByUser, setVideoStreamsByUser] = useState<Record<string, MediaStream>>({});
+  const [isCameraOn, setIsCameraOn] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [voiceLatencyMs, setVoiceLatencyMs] = useState<number | null>(null);
 
   const localStreamRef = useRef<MediaStream | null>(null);
+  const localCameraStreamRef = useRef<MediaStream | null>(null);
+  const localScreenStreamRef = useRef<MediaStream | null>(null);
+  const activeVideoTrackRef = useRef<MediaStreamTrack | null>(null);
+  const activeVideoSourceRef = useRef<"camera" | "screen" | null>(null);
   const signalChannelRef = useRef<RealtimeChannel | null>(null);
   const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const videoSenderByPeerRef = useRef<Map<string, RTCRtpSender>>(new Map());
   const remoteStreamsRef = useRef<Map<string, MediaStream>>(new Map());
   const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -75,6 +91,8 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const isMutedRef = useRef(false);
   const isDeafenedRef = useRef(false);
   const isForcedMutedRef = useRef(false);
+  const isCameraOnRef = useRef(false);
+  const isScreenSharingRef = useRef(false);
   const joinVoiceChannelRef = useRef<(channelId: string) => Promise<void>>(async () => undefined);
 
   useEffect(() => {
@@ -87,6 +105,14 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       audio.muted = isDeafened;
     });
   }, [isDeafened]);
+
+  useEffect(() => {
+    isCameraOnRef.current = isCameraOn;
+  }, [isCameraOn]);
+
+  useEffect(() => {
+    isScreenSharingRef.current = isScreenSharing;
+  }, [isScreenSharing]);
 
   const getDisplayName = useCallback(() => {
     if (!user) return "Unknown";
@@ -113,6 +139,8 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       muted: isMutedRef.current,
       deafened: isDeafenedRef.current,
       forced_muted: isForcedMutedRef.current,
+      camera_on: isCameraOnRef.current,
+      screen_on: isScreenSharingRef.current,
     });
   }, [getDisplayName, user]);
 
@@ -122,6 +150,8 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       peer.close();
       peersRef.current.delete(userId);
     }
+
+    videoSenderByPeerRef.current.delete(userId);
 
     const stream = remoteStreamsRef.current.get(userId);
     if (stream) {
@@ -153,6 +183,13 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       speakingStateRef.current = { ...speakingStateRef.current, [userId]: false };
       setParticipants((prev) => prev.map((p) => (p.userId === userId ? { ...p, speaking: false } : p)));
     }
+
+    setVideoStreamsByUser((prev) => {
+      if (!prev[userId]) return prev;
+      const next = { ...prev };
+      delete next[userId];
+      return next;
+    });
   }, []);
 
   const startSpeakingDetection = useCallback((userId: string, stream: MediaStream) => {
@@ -203,9 +240,15 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   }, []);
 
+  const stopMediaStream = useCallback((stream: MediaStream | null) => {
+    if (!stream) return;
+    stream.getTracks().forEach((track) => track.stop());
+  }, []);
+
   const leaveVoiceChannel = useCallback(async () => {
     peersRef.current.forEach((peer) => peer.close());
     peersRef.current.clear();
+    videoSenderByPeerRef.current.clear();
 
     remoteStreamsRef.current.forEach((stream) => {
       stream.getTracks().forEach((track) => track.stop());
@@ -235,6 +278,12 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       localStreamRef.current.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
     }
+    stopMediaStream(localCameraStreamRef.current);
+    stopMediaStream(localScreenStreamRef.current);
+    localCameraStreamRef.current = null;
+    localScreenStreamRef.current = null;
+    activeVideoTrackRef.current = null;
+    activeVideoSourceRef.current = null;
 
     if (audioContextRef.current) {
       await audioContextRef.current.close().catch(() => undefined);
@@ -242,11 +291,16 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     setParticipants([]);
+    setVideoStreamsByUser({});
     setIsConnected(false);
     setActiveVoiceChannelId(null);
+    setIsCameraOn(false);
+    setIsScreenSharing(false);
+    isCameraOnRef.current = false;
+    isScreenSharingRef.current = false;
     setVoiceLatencyMs(null);
     isForcedMutedRef.current = false;
-  }, []);
+  }, [stopMediaStream]);
 
   const sampleVoiceLatency = useCallback(async () => {
     if (peersRef.current.size === 0) {
@@ -287,6 +341,118 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   }, []);
 
+  const setSelfVideoPreview = useCallback(
+    (track: MediaStreamTrack | null) => {
+      if (!user) return;
+      setVideoStreamsByUser((prev) => {
+        const hasCurrent = !!prev[user.id];
+        if (!track) {
+          if (!hasCurrent) return prev;
+          const next = { ...prev };
+          delete next[user.id];
+          return next;
+        }
+        const stream = new MediaStream([track]);
+        return { ...prev, [user.id]: stream };
+      });
+    },
+    [user],
+  );
+
+  const renegotiatePeer = useCallback(
+    (peerId: string, pc: RTCPeerConnection, attempt = 0) => {
+      if (!user) return;
+      if (pc.signalingState !== "stable") {
+        if (attempt < 6) {
+          window.setTimeout(() => renegotiatePeer(peerId, pc, attempt + 1), 120);
+        }
+        return;
+      }
+
+      void (async () => {
+        try {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          sendSignal({
+            type: "offer",
+            from: user.id,
+            to: peerId,
+            data: offer,
+          });
+        } catch {
+          // Ignore transient renegotiation failures; future signaling will recover.
+        }
+      })();
+    },
+    [sendSignal, user],
+  );
+
+  const attachVideoTrackToPeer = useCallback(
+    async (peerId: string, pc: RTCPeerConnection, track: MediaStreamTrack, sourceStream: MediaStream) => {
+      const existingSender = videoSenderByPeerRef.current.get(peerId);
+      if (existingSender) {
+        await existingSender.replaceTrack(track);
+        return;
+      }
+      const sender = pc.addTrack(track, sourceStream);
+      videoSenderByPeerRef.current.set(peerId, sender);
+      renegotiatePeer(peerId, pc);
+    },
+    [renegotiatePeer],
+  );
+
+  const detachVideoTrackFromPeer = useCallback(
+    async (peerId: string, pc: RTCPeerConnection) => {
+      const sender = videoSenderByPeerRef.current.get(peerId);
+      if (!sender) return;
+      try {
+        await sender.replaceTrack(null);
+      } catch {
+        // Ignore and attempt removeTrack below.
+      }
+      try {
+        pc.removeTrack(sender);
+      } catch {
+        // removeTrack can fail if connection is already closing.
+      }
+      videoSenderByPeerRef.current.delete(peerId);
+      renegotiatePeer(peerId, pc);
+    },
+    [renegotiatePeer],
+  );
+
+  const clearActiveVideoSource = useCallback(async () => {
+    const localTrack = activeVideoTrackRef.current;
+    activeVideoTrackRef.current = null;
+    activeVideoSourceRef.current = null;
+
+    const detachTasks = Array.from(peersRef.current.entries()).map(([peerId, pc]) => detachVideoTrackFromPeer(peerId, pc));
+    await Promise.allSettled(detachTasks);
+
+    if (localTrack) {
+      localTrack.stop();
+    }
+
+    setSelfVideoPreview(null);
+  }, [detachVideoTrackFromPeer, setSelfVideoPreview]);
+
+  const activateVideoSource = useCallback(
+    async (source: "camera" | "screen", stream: MediaStream) => {
+      const [videoTrack] = stream.getVideoTracks();
+      if (!videoTrack) throw new Error("No video track available.");
+
+      activeVideoTrackRef.current = videoTrack;
+      activeVideoSourceRef.current = source;
+      setSelfVideoPreview(videoTrack);
+
+      const attachTasks = Array.from(peersRef.current.entries()).map(([peerId, pc]) =>
+        attachVideoTrackToPeer(peerId, pc, videoTrack, stream),
+      );
+      await Promise.allSettled(attachTasks);
+    },
+    [attachVideoTrackToPeer, setSelfVideoPreview],
+  );
+
   const ensureAudioElement = useCallback((userId: string, stream: MediaStream) => {
     let audio = audioElementsRef.current.get(userId);
     if (!audio) {
@@ -311,6 +477,13 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           pc.addTrack(track, localStreamRef.current as MediaStream);
         });
       }
+      if (activeVideoTrackRef.current) {
+        const sourceStream = activeVideoSourceRef.current === "screen" ? localScreenStreamRef.current : localCameraStreamRef.current;
+        if (sourceStream) {
+          const sender = pc.addTrack(activeVideoTrackRef.current, sourceStream);
+          videoSenderByPeerRef.current.set(targetUserId, sender);
+        }
+      }
 
       pc.onicecandidate = (event) => {
         if (!event.candidate || !user) return;
@@ -326,8 +499,31 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const [stream] = event.streams;
         if (!stream) return;
         remoteStreamsRef.current.set(targetUserId, stream);
-        ensureAudioElement(targetUserId, stream);
-        startSpeakingDetection(targetUserId, stream);
+        if (stream.getAudioTracks().length > 0) {
+          ensureAudioElement(targetUserId, stream);
+          startSpeakingDetection(targetUserId, stream);
+        }
+
+        const syncVideoState = () => {
+          const hasLiveVideo = stream.getVideoTracks().some((track) => track.readyState === "live");
+          setVideoStreamsByUser((prev) => {
+            if (hasLiveVideo) {
+              if (prev[targetUserId] === stream) return prev;
+              return { ...prev, [targetUserId]: stream };
+            }
+            if (!prev[targetUserId]) return prev;
+            const next = { ...prev };
+            delete next[targetUserId];
+            return next;
+          });
+        };
+
+        syncVideoState();
+        stream.getVideoTracks().forEach((track) => {
+          track.onended = syncVideoState;
+          track.onmute = syncVideoState;
+          track.onunmute = syncVideoState;
+        });
       };
 
       pc.onconnectionstatechange = () => {
@@ -358,13 +554,22 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const state = channel.presenceState();
     const all = Object.entries(state).map(([uid, presences]) => {
-      const meta = (presences[0] || {}) as { display_name?: string; muted?: boolean; deafened?: boolean; forced_muted?: boolean };
+      const meta = (presences[0] || {}) as {
+        display_name?: string;
+        muted?: boolean;
+        deafened?: boolean;
+        forced_muted?: boolean;
+        camera_on?: boolean;
+        screen_on?: boolean;
+      };
       return {
         userId: uid,
         displayName: meta.display_name || "Unknown",
         muted: !!meta.muted,
         deafened: !!meta.deafened,
         forcedMuted: !!meta.forced_muted,
+        cameraOn: !!meta.camera_on,
+        screenSharing: !!meta.screen_on,
         speaking: !!speakingStateRef.current[uid],
         self: uid === user.id,
       } satisfies VoiceParticipant;
@@ -532,6 +737,108 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   }, [updateLocalAudioTrack, updatePresence]);
 
+  const toggleCamera = useCallback(async () => {
+    if (!isConnected) {
+      toast.error("Join a voice channel to use your camera.");
+      return;
+    }
+
+    if (activeVideoSourceRef.current === "camera") {
+      await clearActiveVideoSource();
+      stopMediaStream(localCameraStreamRef.current);
+      localCameraStreamRef.current = null;
+      setIsCameraOn(false);
+      setIsScreenSharing(false);
+      isCameraOnRef.current = false;
+      isScreenSharingRef.current = false;
+      requestAnimationFrame(updatePresence);
+      return;
+    }
+
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    } catch {
+      toast.error("Camera access was denied.");
+      return;
+    }
+
+    await clearActiveVideoSource();
+    stopMediaStream(localScreenStreamRef.current);
+    localScreenStreamRef.current = null;
+    stopMediaStream(localCameraStreamRef.current);
+    localCameraStreamRef.current = stream;
+
+    await activateVideoSource("camera", stream);
+    setIsCameraOn(true);
+    setIsScreenSharing(false);
+    isCameraOnRef.current = true;
+    isScreenSharingRef.current = false;
+    requestAnimationFrame(updatePresence);
+  }, [activateVideoSource, clearActiveVideoSource, isConnected, stopMediaStream, updatePresence]);
+
+  const toggleScreenShare = useCallback(async () => {
+    if (!isConnected) {
+      toast.error("Join a voice channel to share your screen.");
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      toast.error("Screen sharing is not supported in this browser.");
+      return;
+    }
+
+    if (activeVideoSourceRef.current === "screen") {
+      await clearActiveVideoSource();
+      stopMediaStream(localScreenStreamRef.current);
+      localScreenStreamRef.current = null;
+      setIsScreenSharing(false);
+      setIsCameraOn(false);
+      isScreenSharingRef.current = false;
+      isCameraOnRef.current = false;
+      requestAnimationFrame(updatePresence);
+      return;
+    }
+
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    } catch {
+      toast.error("Screen share permission was denied.");
+      return;
+    }
+
+    await clearActiveVideoSource();
+    stopMediaStream(localCameraStreamRef.current);
+    localCameraStreamRef.current = null;
+    stopMediaStream(localScreenStreamRef.current);
+    localScreenStreamRef.current = stream;
+
+    const [track] = stream.getVideoTracks();
+    if (track) {
+      track.onended = () => {
+        if (activeVideoSourceRef.current !== "screen") return;
+        void (async () => {
+          await clearActiveVideoSource();
+          stopMediaStream(localScreenStreamRef.current);
+          localScreenStreamRef.current = null;
+          setIsScreenSharing(false);
+          setIsCameraOn(false);
+          isScreenSharingRef.current = false;
+          isCameraOnRef.current = false;
+          requestAnimationFrame(updatePresence);
+        })();
+      };
+    }
+
+    await activateVideoSource("screen", stream);
+    setIsScreenSharing(true);
+    setIsCameraOn(false);
+    isScreenSharingRef.current = true;
+    isCameraOnRef.current = false;
+    requestAnimationFrame(updatePresence);
+  }, [activateVideoSource, clearActiveVideoSource, isConnected, stopMediaStream, updatePresence]);
+
   useEffect(() => {
     return () => {
       void leaveVoiceChannel();
@@ -558,27 +865,37 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     () => ({
       activeVoiceChannelId,
       participants,
+      videoStreamsByUser,
       isConnected,
       isMuted,
       isDeafened,
+      isCameraOn,
+      isScreenSharing,
       voiceLatencyMs,
       moderateVoiceParticipant,
       joinVoiceChannel,
       leaveVoiceChannel,
       toggleMute,
       toggleDeafen,
+      toggleCamera,
+      toggleScreenShare,
     }),
     [
       activeVoiceChannelId,
+      isCameraOn,
       isConnected,
       isDeafened,
       isMuted,
+      isScreenSharing,
       joinVoiceChannel,
       leaveVoiceChannel,
       moderateVoiceParticipant,
       participants,
       toggleDeafen,
+      toggleCamera,
       toggleMute,
+      toggleScreenShare,
+      videoStreamsByUser,
       voiceLatencyMs,
     ],
   );
