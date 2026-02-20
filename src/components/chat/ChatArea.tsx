@@ -2,7 +2,7 @@ import { Fragment, useState, useRef, useEffect, useMemo, useCallback } from "rea
 import { useChatContext, type Message } from "@/context/ChatContext";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { Hash, Pin, Users, Search, Inbox, HelpCircle, PlusCircle, Gift, Smile, SendHorizonal, Pencil, Trash2, X, Check, Paperclip, FileIcon, ImageIcon, MessageSquare, Reply, Volume2, PhoneOff, CalendarClock, Megaphone, BarChart3, CalendarDays } from "lucide-react";
+import { Hash, Pin, Users, Search, Inbox, HelpCircle, PlusCircle, Gift, Smile, SendHorizonal, Pencil, Trash2, X, Check, Paperclip, FileIcon, ImageIcon, MessageSquare, Reply, Volume2, PhoneOff, CalendarClock, Megaphone, BarChart3, CalendarDays, MicOff, UserX } from "lucide-react";
 import { format, isSameDay, isToday, isYesterday } from "date-fns";
 import { toast } from "sonner";
 import EmojiPicker from "./EmojiPicker";
@@ -55,7 +55,7 @@ const ChatArea = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const { activeChannelId, activeServerId, channels, messages, sendMessage, scheduleMessage, editMessage, deleteMessage, members, profile, typingUsers, setTyping, addReaction, pinMessage, unpinMessage, moderationState, servers, unreadCountByChannel, channelLastReadAtByChannel, markChannelAsRead, setActiveChannel } = useChatContext();
-  const { isConnected, activeVoiceChannelId, participants, leaveVoiceChannel } = useVoiceContext();
+  const { isConnected, activeVoiceChannelId, participants, leaveVoiceChannel, moderateVoiceParticipant } = useVoiceContext();
   const [input, setInput] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
@@ -109,6 +109,7 @@ const ChatArea = () => {
   const [eventStartsAt, setEventStartsAt] = useState("");
   const [eventEndsAt, setEventEndsAt] = useState("");
   const [rsvpSavingEventId, setRsvpSavingEventId] = useState<string | null>(null);
+  const [moveVoiceTargetByUser, setMoveVoiceTargetByUser] = useState<Record<string, string>>({});
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -182,6 +183,11 @@ const ChatArea = () => {
   const canCreateEvents = currentPermissions.includes("events") || isServerOwner;
   const canPinMessages = currentPermissions.includes("pin_messages") || isServerOwner;
   const canDeleteAnyMessages = currentPermissions.includes("delete_messages") || isServerOwner;
+  const canVoiceKickUsers = currentPermissions.includes("voice_kick_users") || isServerOwner;
+  const canVoiceMuteUsers = currentPermissions.includes("voice_mute_users") || isServerOwner;
+  const canMoveVoiceUsers = currentPermissions.includes("move_voice_users") || isServerOwner;
+  const canModerateVoiceUsers = canVoiceKickUsers || canVoiceMuteUsers || canMoveVoiceUsers;
+  const voiceChannelOptions = useMemo(() => channels.filter((c) => c.type === "voice"), [channels]);
   const onboardingTitle = activeServer?.onboarding_welcome_title || `Welcome to ${activeServer?.name || "this server"}`;
   const onboardingMessage =
     activeServer?.onboarding_welcome_message || "Please review and accept the server rules before you can chat.";
@@ -1113,6 +1119,31 @@ const ChatArea = () => {
     }
   }, [activeChannelId, activeUnreadCount, isNearBottom, markChannelAsRead]);
 
+  const getVoiceMoveTarget = useCallback(
+    (userId: string) => {
+      const selected = moveVoiceTargetByUser[userId];
+      if (selected) return selected;
+      const fallback = voiceChannelOptions.find((c) => c.id !== activeVoiceChannelId);
+      return fallback?.id || "";
+    },
+    [activeVoiceChannelId, moveVoiceTargetByUser, voiceChannelOptions],
+  );
+
+  const handleModerateVoiceParticipant = useCallback(
+    async (userId: string, action: "kick" | "force_mute" | "force_unmute" | "move", targetChannelId?: string) => {
+      try {
+        await moderateVoiceParticipant(userId, action, targetChannelId);
+        if (action === "kick") toast.success("User kicked from voice.");
+        if (action === "force_mute") toast.success("User voice-muted.");
+        if (action === "force_unmute") toast.success("User unmuted.");
+        if (action === "move") toast.success("User moved to another voice channel.");
+      } catch (error) {
+        toast.error(`Voice moderation failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+      }
+    },
+    [moderateVoiceParticipant],
+  );
+
   useEffect(() => {
     if (!activeChannelId || activeUnreadCount === 0) return;
     if (isNearBottom()) {
@@ -1120,61 +1151,177 @@ const ChatArea = () => {
     }
   }, [activeChannelId, activeUnreadCount, isNearBottom, markChannelAsRead, messages.length]);
 
+  useEffect(() => {
+    setMoveVoiceTargetByUser({});
+  }, [activeChannelId]);
+
+  useEffect(() => {
+    if (!activeVoiceChannelId || !activeChannelId) return;
+    const selectedChannel = channels.find((c) => c.id === activeChannelId);
+    if (selectedChannel?.type !== "voice") return;
+    if (activeChannelId === activeVoiceChannelId) return;
+    setActiveChannel(activeVoiceChannelId);
+  }, [activeChannelId, activeVoiceChannelId, channels, setActiveChannel]);
+
   if (isVoiceChannelView) {
     const connectedToSelected = isConnected && activeVoiceChannelId === activeChannelId;
     const visibleParticipants = connectedToSelected ? participants : [];
+    const speakingCount = visibleParticipants.filter((p) => p.speaking).length;
 
     return (
       <div className="flex flex-1 min-w-0 bg-chat-area">
         <div className="flex flex-col flex-1 min-w-0">
-          <div className="h-12 px-4 flex items-center justify-between border-b border-border/50 shrink-0">
-            <div className="flex items-center gap-2">
-              <Volume2 className="w-5 h-5 text-muted-foreground" />
-              <span className="font-semibold text-foreground">{channel?.name || "Voice Channel"}</span>
+          <div className="h-14 px-4 flex items-center justify-between border-b border-border/50 shrink-0 bg-gradient-to-r from-secondary/25 via-secondary/10 to-transparent">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-primary/15 border border-primary/30 flex items-center justify-center shrink-0">
+                <Volume2 className="w-4 h-4 text-primary" />
+              </div>
+              <div className="min-w-0">
+                <p className="font-semibold text-foreground truncate">{channel?.name || "Voice Channel"}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {connectedToSelected
+                    ? `${visibleParticipants.length} connected${speakingCount > 0 ? ` | ${speakingCount} speaking` : ""}`
+                    : "Not connected"}
+                </p>
+              </div>
             </div>
-            {connectedToSelected && (
-              <button
-                onClick={() => void leaveVoiceChannel()}
-                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-              >
-                <PhoneOff className="w-3.5 h-3.5" />
-                Leave
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              {connectedToSelected && (
+                <span className="text-[11px] px-2 py-1 rounded-full border border-border bg-background/70 text-muted-foreground">
+                  Live
+                </span>
+              )}
+              {connectedToSelected && (
+                <button
+                  onClick={() => void leaveVoiceChannel()}
+                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                >
+                  <PhoneOff className="w-3.5 h-3.5" />
+                  Leave
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto p-4">
             {!connectedToSelected && (
               <div className="h-full flex items-center justify-center">
-                <div className="text-center text-muted-foreground">
+                <div className="text-center text-muted-foreground rounded-xl border border-border/60 bg-card/70 px-8 py-10 max-w-md">
                   <Volume2 className="w-12 h-12 mx-auto mb-3 opacity-40" />
-                  <p className="text-sm">Join this voice channel from the channel list to see connected users.</p>
+                  <p className="text-sm font-medium text-foreground mb-1">You are not connected to this voice channel.</p>
+                  <p className="text-xs">Join from the channel list to view live participant cards and controls.</p>
                 </div>
               </div>
             )}
 
             {connectedToSelected && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                 {visibleParticipants.map((p) => {
                   const profile = memberMap[p.userId];
                   const initials = p.displayName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
+                  const isTargetOwner = activeServer?.owner_id === p.userId;
+                  const canActOnParticipant = !p.self && !isTargetOwner;
+                  const moveTarget = getVoiceMoveTarget(p.userId);
+                  const stateLabel = p.deafened
+                    ? "Deafened"
+                    : p.forcedMuted
+                      ? "Voice-muted by moderator"
+                      : p.muted
+                        ? "Muted"
+                        : p.speaking
+                          ? "Speaking"
+                          : "Listening";
+                  const stateClass = p.deafened || p.forcedMuted
+                    ? "text-destructive"
+                    : p.speaking
+                      ? "text-status-online"
+                      : "text-muted-foreground";
                   return (
-                    <div key={p.userId} className="rounded-md border border-border/60 bg-card p-3 flex items-center gap-3">
-                      {profile?.avatar_url ? (
-                        <img src={profile.avatar_url} alt={p.displayName} className="w-10 h-10 rounded-full object-cover" />
-                      ) : (
-                        <div className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center text-xs font-semibold text-foreground">
-                          {initials}
+                    <div key={p.userId} className="rounded-xl border border-border/60 bg-gradient-to-br from-card via-card to-secondary/20 p-3 space-y-2 shadow-sm">
+                      <div className="flex items-center gap-3">
+                        {profile?.avatar_url ? (
+                          <img
+                            src={profile.avatar_url}
+                            alt={p.displayName}
+                            className={`w-10 h-10 rounded-full object-cover ring-2 ${
+                              p.speaking ? "ring-status-online/60" : "ring-border/70"
+                            }`}
+                          />
+                        ) : (
+                          <div className={`w-10 h-10 rounded-full bg-secondary flex items-center justify-center text-xs font-semibold text-foreground ring-2 ${
+                            p.speaking ? "ring-status-online/60" : "ring-border/70"
+                          }`}>
+                            {initials}
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className={`text-sm truncate ${p.self ? "font-semibold text-foreground" : "text-foreground"}`}>
+                            {p.displayName}{p.self ? " (You)" : ""}
+                          </p>
+                          <p className={`text-xs ${stateClass}`}>
+                            {stateLabel}
+                          </p>
+                        </div>
+                        <div className="ml-auto flex items-center gap-1">
+                          {p.forcedMuted && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-destructive/15 text-destructive border border-destructive/30">
+                              Forced
+                            </span>
+                          )}
+                          {p.muted && !p.forcedMuted && (
+                            <MicOff className="w-3.5 h-3.5 text-muted-foreground" />
+                          )}
+                        </div>
+                      </div>
+                      {canModerateVoiceUsers && canActOnParticipant && (
+                        <div className="pt-2 border-t border-border/50 flex flex-wrap items-center gap-1.5">
+                          {canVoiceMuteUsers && (
+                            <button
+                              onClick={() => void handleModerateVoiceParticipant(p.userId, p.forcedMuted ? "force_unmute" : "force_mute")}
+                              className={`px-2 py-1 rounded text-xs border ${
+                                p.forcedMuted
+                                  ? "border-primary/50 text-primary hover:bg-primary/10"
+                                  : "border-border bg-background/70 text-muted-foreground hover:text-foreground"
+                              }`}
+                            >
+                              {p.forcedMuted ? "Unmute" : "Mute"}
+                            </button>
+                          )}
+                          {canVoiceKickUsers && (
+                            <button
+                              onClick={() => void handleModerateVoiceParticipant(p.userId, "kick")}
+                              className="px-2 py-1 rounded text-xs border border-border bg-background/70 text-muted-foreground hover:text-destructive inline-flex items-center gap-1"
+                            >
+                              <UserX className="w-3 h-3" />
+                              Kick
+                            </button>
+                          )}
+                          {canMoveVoiceUsers && voiceChannelOptions.length > 1 && (
+                            <div className="ml-auto flex items-center gap-1">
+                              <select
+                                value={moveTarget}
+                                onChange={(e) => setMoveVoiceTargetByUser((prev) => ({ ...prev, [p.userId]: e.target.value }))}
+                                className="px-1.5 py-1 rounded bg-background border border-border text-[11px] text-foreground"
+                              >
+                                {voiceChannelOptions
+                                  .filter((voiceChannel) => voiceChannel.id !== activeVoiceChannelId)
+                                  .map((voiceChannel) => (
+                                    <option key={`${p.userId}-${voiceChannel.id}`} value={voiceChannel.id}>
+                                      #{voiceChannel.name}
+                                    </option>
+                                  ))}
+                              </select>
+                              <button
+                                onClick={() => void handleModerateVoiceParticipant(p.userId, "move", moveTarget)}
+                                disabled={!moveTarget}
+                                className="px-2 py-1 rounded text-xs border border-border text-muted-foreground hover:text-foreground disabled:opacity-50"
+                              >
+                                Move
+                              </button>
+                            </div>
+                          )}
                         </div>
                       )}
-                      <div className="min-w-0">
-                        <p className={`text-sm truncate ${p.self ? "font-semibold text-foreground" : "text-foreground"}`}>
-                          {p.displayName}{p.self ? " (You)" : ""}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {p.deafened ? "Deafened" : p.muted ? "Muted" : p.speaking ? "Speaking" : "Listening"}
-                        </p>
-                      </div>
                     </div>
                   );
                 })}

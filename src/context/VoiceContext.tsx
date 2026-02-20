@@ -8,9 +8,12 @@ interface VoiceParticipant {
   displayName: string;
   muted: boolean;
   deafened: boolean;
+  forcedMuted: boolean;
   speaking: boolean;
   self: boolean;
 }
+
+type VoiceModerationAction = "kick" | "force_mute" | "force_unmute" | "move";
 
 interface VoiceState {
   activeVoiceChannelId: string | null;
@@ -19,6 +22,7 @@ interface VoiceState {
   isMuted: boolean;
   isDeafened: boolean;
   voiceLatencyMs: number | null;
+  moderateVoiceParticipant: (targetUserId: string, action: VoiceModerationAction, targetChannelId?: string) => Promise<void>;
   joinVoiceChannel: (channelId: string) => Promise<void>;
   leaveVoiceChannel: () => Promise<void>;
   toggleMute: () => void;
@@ -44,6 +48,12 @@ type SignalPayload = {
   data: RTCSessionDescriptionInit | RTCIceCandidateInit;
 };
 
+type VoiceModPayload = {
+  action: VoiceModerationAction;
+  to: string;
+  target_channel_id?: string;
+};
+
 export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
   const [activeVoiceChannelId, setActiveVoiceChannelId] = useState<string | null>(null);
@@ -64,6 +74,8 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const speakingCleanupRef = useRef<Map<string, () => void>>(new Map());
   const isMutedRef = useRef(false);
   const isDeafenedRef = useRef(false);
+  const isForcedMutedRef = useRef(false);
+  const joinVoiceChannelRef = useRef<(channelId: string) => Promise<void>>(async () => undefined);
 
   useEffect(() => {
     isMutedRef.current = isMuted;
@@ -100,6 +112,7 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       display_name: getDisplayName(),
       muted: isMutedRef.current,
       deafened: isDeafenedRef.current,
+      forced_muted: isForcedMutedRef.current,
     });
   }, [getDisplayName, user]);
 
@@ -232,6 +245,7 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setIsConnected(false);
     setActiveVoiceChannelId(null);
     setVoiceLatencyMs(null);
+    isForcedMutedRef.current = false;
   }, []);
 
   const sampleVoiceLatency = useCallback(async () => {
@@ -344,12 +358,13 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const state = channel.presenceState();
     const all = Object.entries(state).map(([uid, presences]) => {
-      const meta = (presences[0] || {}) as { display_name?: string; muted?: boolean; deafened?: boolean };
+      const meta = (presences[0] || {}) as { display_name?: string; muted?: boolean; deafened?: boolean; forced_muted?: boolean };
       return {
         userId: uid,
         displayName: meta.display_name || "Unknown",
         muted: !!meta.muted,
         deafened: !!meta.deafened,
+        forcedMuted: !!meta.forced_muted,
         speaking: !!speakingStateRef.current[uid],
         self: uid === user.id,
       } satisfies VoiceParticipant;
@@ -426,6 +441,38 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             await pc.addIceCandidate(new RTCIceCandidate(payload.data as RTCIceCandidateInit));
           }
         })
+        .on("broadcast", { event: "mod_action" }, async ({ payload }: { payload: VoiceModPayload }) => {
+          if (!user || payload.to !== user.id) return;
+
+          if (payload.action === "kick") {
+            await leaveVoiceChannel();
+            return;
+          }
+
+          if (payload.action === "force_mute") {
+            isForcedMutedRef.current = true;
+            setIsMuted(true);
+            updateLocalAudioTrack(true, isDeafenedRef.current);
+            requestAnimationFrame(updatePresence);
+            return;
+          }
+
+          if (payload.action === "force_unmute") {
+            isForcedMutedRef.current = false;
+            setIsMuted(false);
+            updateLocalAudioTrack(false, isDeafenedRef.current);
+            requestAnimationFrame(updatePresence);
+            return;
+          }
+
+          if (payload.action === "move" && payload.target_channel_id) {
+            const targetChannelId = payload.target_channel_id;
+            await leaveVoiceChannel();
+            window.setTimeout(() => {
+              void joinVoiceChannelRef.current(targetChannelId);
+            }, 20);
+          }
+        })
         .on("presence", { event: "sync" }, syncParticipantsFromPresence);
 
       voiceChannel.subscribe((status) => {
@@ -440,7 +487,34 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     [activeVoiceChannelId, createPeer, isConnected, leaveVoiceChannel, sendSignal, startSpeakingDetection, syncParticipantsFromPresence, updateLocalAudioTrack, updatePresence, user],
   );
 
+  useEffect(() => {
+    joinVoiceChannelRef.current = joinVoiceChannel;
+  }, [joinVoiceChannel]);
+
+  const moderateVoiceParticipant = useCallback(async (targetUserId: string, action: VoiceModerationAction, targetChannelId?: string) => {
+    const channel = signalChannelRef.current;
+    if (!channel || !user || !isConnected) {
+      throw new Error("Not connected to voice.");
+    }
+    if (action === "move" && !targetChannelId) {
+      throw new Error("Target voice channel is required.");
+    }
+
+    const payload: VoiceModPayload = {
+      action,
+      to: targetUserId,
+      ...(targetChannelId ? { target_channel_id: targetChannelId } : {}),
+    };
+
+    await channel.send({
+      type: "broadcast",
+      event: "mod_action",
+      payload,
+    });
+  }, [isConnected, user]);
+
   const toggleMute = useCallback(() => {
+    if (isForcedMutedRef.current) return;
     setIsMuted((prev) => {
       const next = !prev;
       updateLocalAudioTrack(next, isDeafenedRef.current);
@@ -488,12 +562,25 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       isMuted,
       isDeafened,
       voiceLatencyMs,
+      moderateVoiceParticipant,
       joinVoiceChannel,
       leaveVoiceChannel,
       toggleMute,
       toggleDeafen,
     }),
-    [activeVoiceChannelId, isConnected, isDeafened, isMuted, joinVoiceChannel, leaveVoiceChannel, participants, toggleDeafen, toggleMute, voiceLatencyMs],
+    [
+      activeVoiceChannelId,
+      isConnected,
+      isDeafened,
+      isMuted,
+      joinVoiceChannel,
+      leaveVoiceChannel,
+      moderateVoiceParticipant,
+      participants,
+      toggleDeafen,
+      toggleMute,
+      voiceLatencyMs,
+    ],
   );
 
   return <VoiceContext.Provider value={value}>{children}</VoiceContext.Provider>;

@@ -38,6 +38,8 @@ const ChannelSidebar = () => {
   const [leaving, setLeaving] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const [pendingVoiceSwitchChannelId, setPendingVoiceSwitchChannelId] = useState<string | null>(null);
+  const [switchingVoiceChannel, setSwitchingVoiceChannel] = useState(false);
 
   const textChannels = channels.filter((c) => c.type === "text");
   const voiceChannels = channels.filter((c) => c.type === "voice");
@@ -52,16 +54,28 @@ const ChannelSidebar = () => {
   const ungroupedText = textChannels.filter((c) => !c.group_id);
   const ungroupedVoice = voiceChannels.filter((c) => !c.group_id);
   const activeVoiceChannel = channels.find((c) => c.id === activeVoiceChannelId);
+  const pendingVoiceSwitchChannel = channels.find((c) => c.id === pendingVoiceSwitchChannelId);
   const isOwner = !!user && !!server && server.owner_id === user.id;
   const currentMember = members.find((m) => m.id === user?.id);
   const canManageChannels = isOwner || (currentMember?.role_permissions || []).includes("manage_channels");
   const handleVoiceChannelClick = async (channelId: string) => {
     setActiveChannel(channelId);
     if (activeVoiceChannelId === channelId && isConnected) {
-      await leaveVoiceChannel();
+      return;
+    }
+    if (isConnected && activeVoiceChannelId && activeVoiceChannelId !== channelId) {
+      setPendingVoiceSwitchChannelId(channelId);
       return;
     }
     await joinVoiceChannel(channelId);
+  };
+
+  const handleConfirmVoiceSwitch = async () => {
+    if (!pendingVoiceSwitchChannelId || switchingVoiceChannel) return;
+    setSwitchingVoiceChannel(true);
+    await joinVoiceChannel(pendingVoiceSwitchChannelId);
+    setSwitchingVoiceChannel(false);
+    setPendingVoiceSwitchChannelId(null);
   };
 
   const handleLeaveServerRequest = () => {
@@ -220,14 +234,17 @@ const ChannelSidebar = () => {
                   <button
                     key={ch.id}
                     onClick={() => void handleVoiceChannelClick(ch.id)}
-                    className={`flex items-center gap-1.5 w-full px-2 py-1.5 rounded-md text-sm transition-colors ${
+                    className={`group flex items-center gap-1.5 w-full px-2 py-1.5 rounded-md text-sm border transition-all ${
                       ch.id === activeVoiceChannelId && isConnected
-                        ? "bg-secondary text-foreground"
-                        : "text-muted-foreground hover:text-foreground hover:bg-chat-hover"
+                        ? "border-primary/40 bg-gradient-to-r from-primary/15 to-secondary text-foreground shadow-sm"
+                        : "border-transparent text-muted-foreground hover:text-foreground hover:bg-chat-hover"
                     }`}
                   >
-                    <Volume2 className="w-4 h-4 shrink-0 opacity-70" />
+                    <Volume2 className={`w-4 h-4 shrink-0 ${ch.id === activeVoiceChannelId && isConnected ? "text-primary" : "opacity-70"}`} />
                     <span className="truncate">{ch.name}</span>
+                    {ch.id === activeVoiceChannelId && isConnected && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-status-online animate-pulse" />
+                    )}
                   </button>
                 ))}
               </div>
@@ -237,14 +254,17 @@ const ChannelSidebar = () => {
               <button
                 key={ch.id}
                 onClick={() => void handleVoiceChannelClick(ch.id)}
-                className={`flex items-center gap-1.5 w-full px-2 py-1.5 rounded-md text-sm transition-colors ${
+                className={`group flex items-center gap-1.5 w-full px-2 py-1.5 rounded-md text-sm border transition-all ${
                   ch.id === activeVoiceChannelId && isConnected
-                    ? "bg-secondary text-foreground"
-                    : "text-muted-foreground hover:text-foreground hover:bg-chat-hover"
+                    ? "border-primary/40 bg-gradient-to-r from-primary/15 to-secondary text-foreground shadow-sm"
+                    : "border-transparent text-muted-foreground hover:text-foreground hover:bg-chat-hover"
                 }`}
               >
-                <Volume2 className="w-4 h-4 shrink-0 opacity-70" />
-                <span className="truncate">{ch.name}</span>
+                <Volume2 className={`w-4 h-4 shrink-0 ${ch.id === activeVoiceChannelId && isConnected ? "text-primary" : "opacity-70"}`} />
+                <span className="truncate ">{ch.name}</span>
+                {ch.id === activeVoiceChannelId && isConnected && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-status-online animate-pulse" />
+                )}
               </button>
             ))}
           </div>
@@ -260,11 +280,11 @@ const ChannelSidebar = () => {
 
       {isConnected && activeVoiceChannel && (
         <div className="relative z-20 -ml-[72px] w-[calc(100%+72px)] px-2 pb-2">
-          <div className="rounded-md border border-border/50 bg-server-bar px-2.5 py-2 flex items-center justify-between gap-2">
+          <div className="rounded-lg border border-border/50 bg-gradient-to-r from-server-bar via-secondary/20 to-server-bar px-2.5 py-2 flex items-center justify-between gap-2 shadow-sm">
             <div className="flex items-center gap-2 min-w-0 text-xs font-semibold text-foreground">
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span className="inline-flex">
+                  <span className="inline-flex w-6 h-6 rounded-md bg-primary/15 border border-primary/30 items-center justify-center">
                     <Volume2 className="w-3.5 h-3.5 text-primary shrink-0" />
                   </span>
                 </TooltipTrigger>
@@ -272,7 +292,7 @@ const ChannelSidebar = () => {
                   {voiceLatencyMs === null ? "Latency unavailable" : `Latency: ${voiceLatencyMs} ms`}
                 </TooltipContent>
               </Tooltip>
-              <span className="truncate">
+              <span className="truncate leading-tight">
                 Connected to voice: <span className="text-primary">#{activeVoiceChannel.name}</span>
               </span>
             </div>
@@ -351,6 +371,30 @@ const ChannelSidebar = () => {
               disabled={leaving}
             >
               {leaving ? "Leaving..." : "Leave Server"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={!!pendingVoiceSwitchChannelId}
+        onOpenChange={(open) => {
+          if (!open && !switchingVoiceChannel) setPendingVoiceSwitchChannelId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Switch voice channel?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {`You're currently in "${activeVoiceChannel?.name || "a voice channel"}". Switch to "${pendingVoiceSwitchChannel?.name || "this channel"}"?`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={switchingVoiceChannel}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void handleConfirmVoiceSwitch()}
+              disabled={switchingVoiceChannel || !pendingVoiceSwitchChannelId}
+            >
+              {switchingVoiceChannel ? "Switching..." : "Switch Channel"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
