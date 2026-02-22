@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
+import React, { createContext, useContext, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/AuthContext";
 import { getEffectiveStatus } from "@/lib/presence";
@@ -146,6 +146,9 @@ interface ChatState {
   toggleThreadFollow: (parentMessage: Message) => Promise<void>;
   scheduleMessage: (payload: { content: string; sendAt: string; isAnnouncement?: boolean; replyTo?: string | null }) => Promise<{ ok: boolean; error?: string }>;
   loadingServers: boolean;
+  loadingChannels: boolean;
+  loadingMessages: boolean;
+  loadingMembers: boolean;
   typingUsers: Profile[];
   setTyping: (isTyping: boolean) => void;
   moderationState: ModerationState;
@@ -173,6 +176,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [members, setMembers] = useState<Profile[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loadingServers, setLoadingServers] = useState(true);
+  const [loadingChannels, setLoadingChannels] = useState(false);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [loadingMembers, setLoadingMembers] = useState(false);
   const [typingUsers, setTypingUsers] = useState<Profile[]>([]);
   const [reactions, setReactions] = useState<Record<string, Reaction[]>>({});
   const [moderationState, setModerationState] = useState<ModerationState>({
@@ -767,7 +773,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 
   const loadMembers = useCallback(async () => {
-    if (!activeServerId) return;
+    if (!activeServerId) {
+      setLoadingMembers(false);
+      return;
+    }
+    if (membersRef.current.length === 0) {
+      setLoadingMembers(true);
+    }
     const activeServer = servers.find((s) => s.id === activeServerId);
     const ownerGroupName = activeServer?.owner_group_name || "Owner";
     const { data: memberships } = await supabase
@@ -777,6 +789,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (!memberships || memberships.length === 0) {
       setMembers([]);
+      setLoadingMembers(false);
       return;
     }
 
@@ -910,11 +923,18 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     setMembers(enriched.map(applyEffectivePresence));
+    setLoadingMembers(false);
   }, [activeServerId, applyEffectivePresence, resolveEffectivePermissions, servers]);
 
   useEffect(() => {
-    if (!activeServerId) return;
+    if (!activeServerId) {
+      setLoadingChannels(false);
+      setLoadingMembers(false);
+      return;
+    }
     const requestServerId = activeServerId;
+    setLoadingChannels(true);
+    setLoadingMembers(true);
     setChannels([]);
     setChannelGroups([]);
     setActiveChannelId(null);
@@ -929,6 +949,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const firstConversationChannel = channelList.find((c) => c.type === "text" || c.type === "forum");
         return firstConversationChannel?.id || null;
       });
+      setLoadingChannels(false);
     };
     loadChannels();
 
@@ -1070,9 +1091,19 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [activeChannelId, activeServerId, channels, followedThreadIds, user]);
 
+  // Clear channel-scoped data before paint so previous-channel content never flashes.
+  useLayoutEffect(() => {
+    setMessages([]);
+    setReactions({});
+  }, [activeChannelId]);
+
   // Load messages + reactions + realtime
   useEffect(() => {
-    if (!activeChannelId) { setMessages([]); setReactions({}); return; }
+    if (!activeChannelId) {
+      setLoadingMessages(false);
+      return;
+    }
+    setLoadingMessages(true);
     const currentChannelId = activeChannelId;
 
     const loadMessages = async () => {
@@ -1136,6 +1167,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
         setReactions(grouped);
       }
+      setLoadingMessages(false);
     };
     void loadMessages();
 
@@ -1311,6 +1343,16 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setActiveChannelId(null);
       setChannels([]);
       setChannelGroups([]);
+      setLoadingChannels(true);
+      setLoadingMessages(true);
+      return id;
+    });
+  }, []);
+
+  const setActiveChannel = useCallback((id: string) => {
+    setActiveChannelId((prev) => {
+      if (prev === id) return prev;
+      setLoadingMessages(true);
       return id;
     });
   }, []);
@@ -2026,10 +2068,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         servers, activeServerId, activeChannelId, channels, messages, members, profile, reactions,
         channelGroups,
-        setActiveServer, setActiveChannel: setActiveChannelId, sendMessage, editMessage, deleteMessage,
+        setActiveServer, setActiveChannel, sendMessage, editMessage, deleteMessage,
         createServer, refreshServers, refreshChannels, refreshChannelGroups, refreshProfile: loadProfile,
         addReaction, removeReaction, searchMessages, pinMessage, unpinMessage, getPinnedMessages,
-        getThreadReplies, isThreadFollowed, toggleThreadFollow, scheduleMessage, loadingServers, typingUsers, setTyping, moderationState,
+        getThreadReplies, isThreadFollowed, toggleThreadFollow, scheduleMessage, loadingServers, loadingChannels, loadingMessages, loadingMembers, typingUsers, setTyping, moderationState,
         unreadCountByChannel, channelLastReadAtByChannel, markChannelAsRead,
       }}
     >

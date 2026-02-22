@@ -1,9 +1,14 @@
-import { Fragment, useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { Fragment, useState, useEffect, useRef, useMemo, useCallback, type ReactNode } from "react";
+import { useAuth } from "@/context/AuthContext";
 import { useChatContext, type Message } from "@/context/ChatContext";
-import { X, SendHorizonal, MessageSquare, Search, ArrowLeft, Bell, BellOff, Reply } from "lucide-react";
+import { X, SendHorizonal, MessageSquare, Search, ArrowLeft, Bell, BellOff, Reply, PlusCircle, Smile, ImageIcon, FileIcon } from "lucide-react";
 import { format, isSameDay, isToday, isYesterday } from "date-fns";
 import { parseMessageFeatures } from "@/lib/messageFeatures";
 import { cn } from "@/lib/utils";
+import EmojiPicker from "./EmojiPicker";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export interface ThreadSummaryItem {
   parentMessage: Message;
@@ -22,6 +27,7 @@ interface ThreadPanelProps {
   onThreadSeen: (threadId: string, seenAt: string) => void;
   members: Record<string, { display_name: string; username?: string }>;
   mobileFullscreen?: boolean;
+  desktopOverlay?: boolean;
 }
 
 const COMMENT_REPLY_HEADER_PREFIX = "[in-reply-to]";
@@ -88,11 +94,15 @@ const ThreadPanel = ({
   onThreadSeen,
   members,
   mobileFullscreen = false,
+  desktopOverlay = false,
 }: ThreadPanelProps) => {
+  const { user } = useAuth();
   const { getThreadReplies, sendMessage, isThreadFollowed, toggleThreadFollow, messages } = useChatContext();
   const [replies, setReplies] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [pendingAttachment, setPendingAttachment] = useState<{ url: string; name: string; type: string } | null>(null);
   const [replyToComment, setReplyToComment] = useState<Message | null>(null);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -100,6 +110,7 @@ const ThreadPanel = ({
   const parentCardRef = useRef<HTMLDivElement>(null);
   const threadScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const replyRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -148,6 +159,8 @@ const ThreadPanel = ({
       setLoading(false);
       setInput("");
       setReplyToComment(null);
+      setPendingAttachment(null);
+      setUploading(false);
       shouldStickToBottomRef.current = true;
       setShowJumpToLatest(false);
       setHighlightedMessageId(null);
@@ -156,11 +169,21 @@ const ThreadPanel = ({
     shouldStickToBottomRef.current = true;
     setShowJumpToLatest(false);
     setHighlightedMessageId(null);
+    setReplies([]);
+    setPendingAttachment(null);
+    setUploading(false);
     setLoading(true);
-    getThreadReplies(parentMessage.id).then((r) => {
+    let cancelled = false;
+    const targetParentId = parentMessage.id;
+    getThreadReplies(targetParentId).then((r) => {
+      if (cancelled) return;
+      if (!parentMessage || parentMessage.id !== targetParentId) return;
       setReplies(r);
       setLoading(false);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [parentMessage, getThreadReplies]);
 
   useEffect(() => {
@@ -234,15 +257,37 @@ const ThreadPanel = ({
     setShowJumpToLatest(false);
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+    setUploading(true);
+    const ext = file.name.split(".").pop();
+    const path = `${user.id}/${Date.now()}.${ext}`;
+    const { error } = await supabase.storage.from("chat-attachments").upload(path, file);
+    if (error) {
+      toast.error(`File upload failed: ${error.message}`);
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    const { data: urlData } = supabase.storage.from("chat-attachments").getPublicUrl(path);
+    setPendingAttachment({ url: urlData.publicUrl, name: file.name, type: file.type });
+    setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   const handleSend = async () => {
-    if (!input.trim() || !parentMessage) return;
+    if (!parentMessage || uploading) return;
+    const rawInput = input.trim();
+    if (!rawInput && !pendingAttachment) return;
     const raw = input.trim();
     const content = replyToComment
-      ? encodeCommentReply(replyToComment, getAuthorName(replyToComment.user_id), raw)
-      : raw;
+      ? encodeCommentReply(replyToComment, getAuthorName(replyToComment.user_id), raw || `[file] ${pendingAttachment?.name || "attachment"}`)
+      : (raw || `[file] ${pendingAttachment?.name || "attachment"}`);
     setInput("");
     setReplyToComment(null);
-    await sendMessage(content, undefined, parentMessage.id);
+    await sendMessage(content, pendingAttachment || undefined, parentMessage.id);
+    setPendingAttachment(null);
     const r = await getThreadReplies(parentMessage.id);
     setReplies(r);
     requestAnimationFrame(() => inputRef.current?.focus());
@@ -266,9 +311,32 @@ const ThreadPanel = ({
       })
     : threadSummaries), [members, normalizedQuery, threadSummaries]);
 
-  if (!parentMessage) {
+  const panelClassName = cn(
+    "bg-channel-bar border-l border-border flex flex-col shrink-0",
+    mobileFullscreen
+      ? "w-full h-full"
+      : desktopOverlay
+        ? "h-[100dvh] w-[min(40rem,calc(100vw-4rem))] shadow-2xl"
+        : "w-[24rem]",
+  );
+
+  const renderPanel = (content: ReactNode) => {
+    const panel = <div className={panelClassName}>{content}</div>;
+    if (!desktopOverlay || mobileFullscreen) return panel;
+
     return (
-      <div className={`${mobileFullscreen ? "w-full h-full" : "w-[24rem]"} bg-channel-bar border-l border-border flex flex-col shrink-0`}>
+      <div className="fixed inset-0 z-40" onClick={onClose}>
+        <div className="absolute inset-0 bg-black/20" />
+        <div className="absolute top-0 right-0 h-[100dvh]" onClick={(e) => e.stopPropagation()}>
+          {panel}
+        </div>
+      </div>
+    );
+  };
+
+  if (!parentMessage) {
+    return renderPanel(
+      <>
         <div className="h-12 px-4 flex items-center justify-between border-b border-border/50">
           <div className="flex items-center gap-2">
             <MessageSquare className="w-4 h-4 text-primary" />
@@ -334,7 +402,7 @@ const ThreadPanel = ({
             );
           })}
         </div>
-      </div>
+      </>
     );
   }
 
@@ -343,8 +411,8 @@ const ThreadPanel = ({
   const parsedParent = parseMessageFeatures(parentMessage.content);
   const replyTargetPreview = replyToComment ? truncate(collapseWhitespace(getDisplayText(replyToComment.content)), 120) : "";
 
-  return (
-    <div className={`${mobileFullscreen ? "w-full h-full" : "w-[24rem]"} bg-channel-bar border-l border-border flex flex-col shrink-0`}>
+  return renderPanel(
+    <>
       <div className="h-12 px-4 flex items-center justify-between border-b border-border/50">
         <div className="flex items-center gap-2">
           <button onClick={onBackToList} className="text-muted-foreground hover:text-foreground" title="Back to threads">
@@ -384,10 +452,27 @@ const ThreadPanel = ({
           )}
         </div>
 
-        {loading && <p className="text-xs text-muted-foreground text-center">Loading replies...</p>}
+        {loading && (
+          <div className="space-y-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="flex gap-2 rounded-lg border border-border/50 bg-background/40 p-2.5">
+                <Skeleton className="h-7 w-7 rounded-full shrink-0" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <Skeleton className="h-3 w-20" />
+                    <Skeleton className="h-2.5 w-10" />
+                  </div>
+                  <Skeleton className="h-3.5" style={{ width: `${42 + (i * 11) % 26}%` }} />
+                  <Skeleton className="h-3.5" style={{ width: `${34 + (i * 9) % 28}%` }} />
+                  {i === 2 && <Skeleton className="h-20 w-40 rounded-md" />}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="text-[10px] text-muted-foreground uppercase tracking-wide px-1 sticky top-0 bg-channel-bar/95 backdrop-blur-sm py-1">
-          {replies.length} {replies.length === 1 ? "reply" : "replies"}
+          {loading ? "Loading replies..." : `${replies.length} ${replies.length === 1 ? "reply" : "replies"}`}
         </div>
 
         {!loading && replies.length === 0 && (
@@ -397,7 +482,7 @@ const ThreadPanel = ({
           </div>
         )}
 
-        {replies.map((msg, i) => {
+        {!loading && replies.map((msg, i) => {
           const prevMsg = replies[i - 1];
           const showDateDivider = !prevMsg || !isSameDay(new Date(msg.created_at), new Date(prevMsg.created_at));
           const commentReplyMeta = parseCommentReplyMeta(msg.content);
@@ -459,6 +544,26 @@ const ThreadPanel = ({
                     </button>
                   )}
                   <p className="text-sm text-foreground whitespace-pre-wrap break-words mt-1">{messageBody}</p>
+                  {msg.attachment_url && (
+                    <a
+                      href={msg.attachment_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 block rounded-md border border-border/60 bg-secondary/30 p-2 hover:bg-secondary/50 transition-colors"
+                    >
+                      {msg.attachment_type?.startsWith("image/") ? (
+                        <img
+                          src={msg.attachment_url}
+                          alt={msg.attachment_name || "Attachment"}
+                          className="max-h-48 rounded-md object-cover mb-1"
+                        />
+                      ) : null}
+                      <div className="flex items-center gap-2 text-xs text-foreground">
+                        {msg.attachment_type?.startsWith("image/") ? <ImageIcon className="w-3.5 h-3.5 text-primary" /> : <FileIcon className="w-3.5 h-3.5 text-primary" />}
+                        <span className="truncate">{msg.attachment_name || "Attachment"}</span>
+                      </div>
+                    </a>
+                  )}
                 </div>
               </div>
             </Fragment>
@@ -498,7 +603,31 @@ const ThreadPanel = ({
             </div>
           </div>
         )}
+        {pendingAttachment && (
+          <div className="mb-2 rounded-md border border-border/60 bg-secondary/30 px-2.5 py-2">
+            <div className="flex items-center gap-2">
+              {pendingAttachment.type.startsWith("image/") ? <ImageIcon className="w-4 h-4 text-primary shrink-0" /> : <FileIcon className="w-4 h-4 text-primary shrink-0" />}
+              <span className="text-xs text-foreground truncate flex-1">{pendingAttachment.name}</span>
+              <button
+                onClick={() => setPendingAttachment(null)}
+                className="text-muted-foreground hover:text-foreground"
+                title="Remove attachment"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
         <div className="flex items-end gap-2 bg-chat-input rounded-lg px-3 py-2">
+          <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="text-muted-foreground hover:text-foreground disabled:opacity-50 shrink-0"
+            title="Attach file"
+          >
+            <PlusCircle className="w-4 h-4" />
+          </button>
           <textarea
             ref={inputRef}
             value={input}
@@ -512,14 +641,22 @@ const ThreadPanel = ({
             placeholder={replyToComment ? "Reply to this comment..." : "Reply in thread..."}
             rows={1}
             className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none resize-none max-h-28"
+            disabled={uploading}
           />
-          <button onClick={() => void handleSend()} disabled={!input.trim()} className="text-muted-foreground hover:text-primary disabled:opacity-30">
+          <EmojiPicker onSelect={(emoji) => setInput((prev) => prev + emoji)}>
+            <button className="text-muted-foreground hover:text-foreground shrink-0" title="Add emoji">
+              <Smile className="w-4 h-4" />
+            </button>
+          </EmojiPicker>
+          <button onClick={() => void handleSend()} disabled={(!input.trim() && !pendingAttachment) || uploading} className="text-muted-foreground hover:text-primary disabled:opacity-30 shrink-0">
             <SendHorizonal className="w-4 h-4" />
           </button>
         </div>
-        <p className="text-[10px] text-muted-foreground mt-1">Press Enter to send, Shift+Enter for a new line.</p>
+        <p className="text-[10px] text-muted-foreground mt-1">
+          {uploading ? "Uploading file..." : "Press Enter to send, Shift+Enter for a new line."}
+        </p>
       </div>
-    </div>
+    </>
   );
 };
 

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useChatContext } from "@/context/ChatContext";
 import StatusIndicator from "./StatusIndicator";
 import UserProfileCard from "./UserProfileCard";
+import { MemberSidebarSkeleton } from "@/components/skeletons/AppSkeletons";
 
 type SidebarMember = {
   id: string;
@@ -54,9 +55,13 @@ const MemberItem = ({
 };
 
 const MemberSidebar = ({ forceVisible = false }: { forceVisible?: boolean }) => {
-  const { members, activeServerId } = useChatContext();
+  const { members, activeServerId, loadingMembers } = useChatContext();
   const [profileUser, setProfileUser] = useState<typeof members[0] | null>(null);
   const [profilePos, setProfilePos] = useState<{ top: number; left: number } | undefined>();
+
+  if (activeServerId && loadingMembers) {
+    return <MemberSidebarSkeleton forceVisible={forceVisible} />;
+  }
 
   const offlineMembers = members
     .filter((member) => member.status === "offline")

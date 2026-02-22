@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { DialogListSkeleton, ServerSettingsSkeleton } from "@/components/skeletons/AppSkeletons";
 
 interface MemberWithRole {
   id: string;
@@ -1991,11 +1992,7 @@ const ServerSettingsPage = () => {
   }
 
   if (!server) {
-    return (
-      <div className="min-h-[100dvh] flex items-center justify-center bg-chat-area text-muted-foreground">
-        Loading server settings...
-      </div>
-    );
+    return <ServerSettingsSkeleton />;
   }
 
   if (!isOwner && rolesLoaded && !hasManageChannelsPermission && !hasModerationPermission) {
@@ -2166,7 +2163,7 @@ const ServerSettingsPage = () => {
                   Refresh
                 </button>
               </div>
-              {loadingOnboardingBuilder && <p className="text-sm text-muted-foreground">Loading onboarding builder...</p>}
+              {loadingOnboardingBuilder && <DialogListSkeleton rows={4} />}
               {!loadingOnboardingBuilder && (
                 <>
                   <label className="inline-flex items-center gap-2 text-sm text-foreground">
@@ -2662,7 +2659,7 @@ const ServerSettingsPage = () => {
                 </button>
                 <div className="space-y-2">
                   {loadingRoleOverrides && (
-                    <p className="text-xs text-muted-foreground">Loading overrides...</p>
+                    <DialogListSkeleton rows={3} />
                   )}
                   {!loadingRoleOverrides && selectedRoleOverrides.length === 0 && (
                     <p className="text-xs text-muted-foreground">No overrides configured for this role.</p>
@@ -2736,7 +2733,7 @@ const ServerSettingsPage = () => {
                 </button>
               </div>
               {loadingTemporaryRoleGrants && (
-                <p className="text-xs text-muted-foreground">Loading temporary grants...</p>
+                <DialogListSkeleton rows={3} />
               )}
               {!loadingTemporaryRoleGrants && activeTemporaryRoleGrants.length === 0 && (
                 <p className="text-xs text-muted-foreground">No active temporary grants.</p>
@@ -2782,7 +2779,7 @@ const ServerSettingsPage = () => {
                 </button>
               </div>
               {loadingRoleTemplates && (
-                <p className="text-xs text-muted-foreground">Loading templates...</p>
+                <DialogListSkeleton rows={3} />
               )}
               {!loadingRoleTemplates && roleTemplates.length === 0 && (
                 <p className="text-xs text-muted-foreground">No templates yet.</p>
@@ -2973,7 +2970,7 @@ const ServerSettingsPage = () => {
                   </div>
                 </div>
 
-                {loadingBans && <p className="text-sm text-muted-foreground">Loading bans...</p>}
+                {loadingBans && <DialogListSkeleton rows={4} />}
                 {!loadingBans && bans.length === 0 && (
                   <p className="text-sm text-muted-foreground">No active bans.</p>
                 )}
@@ -3104,7 +3101,7 @@ const ServerSettingsPage = () => {
                     </button>
                   </div>
                 </div>
-                {loadingAutomod && <p className="text-sm text-muted-foreground">Loading AutoMod settings...</p>}
+                {loadingAutomod && <DialogListSkeleton rows={5} />}
                 {!loadingAutomod && (
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                     <div className="rounded-md border border-border/60 p-3 bg-background/70 space-y-2">
@@ -3220,7 +3217,7 @@ const ServerSettingsPage = () => {
                     Refresh
                   </button>
                 </div>
-                {loadingEscalations && <p className="text-sm text-muted-foreground">Loading queue...</p>}
+                {loadingEscalations && <DialogListSkeleton rows={4} />}
                 {!loadingEscalations && escalations.length === 0 && (
                   <p className="text-sm text-muted-foreground">No escalation items.</p>
                 )}
@@ -3290,7 +3287,7 @@ const ServerSettingsPage = () => {
                     Refresh
                   </button>
                 </div>
-                {loadingAppeals && <p className="text-sm text-muted-foreground">Loading appeals...</p>}
+                {loadingAppeals && <DialogListSkeleton rows={4} />}
                 {!loadingAppeals && appeals.length === 0 && (
                   <p className="text-sm text-muted-foreground">No appeals submitted.</p>
                 )}
@@ -3376,7 +3373,7 @@ const ServerSettingsPage = () => {
                   </div>
                 </div>
 
-                {loadingAuditLogs && <p className="text-sm text-muted-foreground">Loading audit log...</p>}
+                {loadingAuditLogs && <DialogListSkeleton rows={4} />}
                 {!loadingAuditLogs && auditLogs.length === 0 && (
                   <p className="text-sm text-muted-foreground">No moderation actions recorded yet.</p>
                 )}

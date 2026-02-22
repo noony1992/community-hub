@@ -7,6 +7,8 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import StatusIndicator from "./StatusIndicator";
 import { getEffectiveStatus } from "@/lib/presence";
+import { DMAreaSkeleton } from "@/components/skeletons/AppSkeletons";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface FriendItem {
   id: string;
@@ -26,7 +28,7 @@ type DMAreaProps = {
 const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMAreaProps) => {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { activeConversationId, conversations, dmMessages, sendDM, startConversation, isFriendsView } = useDMContext();
+  const { activeConversationId, conversations, dmMessages, sendDM, startConversation, isFriendsView, loadingDmMessages, loadingConversations } = useDMContext();
   const [input, setInput] = useState("");
   const [friends, setFriends] = useState<FriendItem[]>([]);
   const [loadingFriends, setLoadingFriends] = useState(false);
@@ -34,6 +36,10 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
 
   const conversation = conversations.find((c) => c.id === activeConversationId);
   const participant = conversation?.participant;
+
+  if (!isFriendsView && loadingConversations && conversations.length === 0 && !activeConversationId) {
+    return <DMAreaSkeleton />;
+  }
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -154,7 +160,22 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
         {isFriendsView && (
           <div className="space-y-2">
-            {loadingFriends && <p className="text-sm text-muted-foreground">Loading friends...</p>}
+            {loadingFriends && (
+              <div className="space-y-3">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="flex items-center justify-between gap-4 px-1 py-2">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <Skeleton className="h-9 w-9 rounded-full shrink-0" />
+                      <div className="space-y-2 flex-1">
+                        <Skeleton className="h-3.5 w-24" />
+                        <Skeleton className="h-3 w-16" />
+                      </div>
+                    </div>
+                    <Skeleton className="h-8 w-10 rounded-md" />
+                  </div>
+                ))}
+              </div>
+            )}
             {!loadingFriends && friends.length === 0 && (
               <p className="text-sm text-muted-foreground">You have no friends yet.</p>
             )}
@@ -198,6 +219,25 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
         )}
         {!isFriendsView && (
           <>
+        {activeConversationId && loadingDmMessages && (
+          <div className="space-y-4">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="flex gap-4 items-start">
+                <Skeleton className="h-10 w-10 rounded-full shrink-0" />
+                <div className="flex-1 space-y-2.5">
+                  <Skeleton className="h-3.5 w-28" />
+                  <Skeleton className="h-3.5 w-2/5" />
+                  {i % 4 === 1 && (
+                    <Skeleton
+                      className="rounded-md"
+                      style={{ width: 176 + ((i * 17) % 44), height: 98 + ((i * 13) % 30) }}
+                    />
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         {!activeConversationId && (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
             <AtSign className="w-16 h-16 mb-4 opacity-30" />
@@ -205,14 +245,14 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
             <p className="text-sm">Pick a conversation or start a new one</p>
           </div>
         )}
-        {activeConversationId && dmMessages.length === 0 && (
+        {activeConversationId && !loadingDmMessages && dmMessages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
             <AtSign className="w-16 h-16 mb-4 opacity-30" />
             <p className="text-lg font-semibold text-foreground">Start of your conversation with {participant?.display_name}</p>
             <p className="text-sm">Send a message to begin!</p>
           </div>
         )}
-        {dmMessages.map((msg, i) => {
+        {!loadingDmMessages && dmMessages.map((msg, i) => {
           const sender = profileMap[msg.user_id];
           const prevMsg = dmMessages[i - 1];
           const showDateDivider = !prevMsg || !isSameDay(new Date(msg.created_at), new Date(prevMsg.created_at));

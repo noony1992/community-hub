@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useChatContext, type Message } from "@/context/ChatContext";
 import { Pin, X } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface PinnedMessagesPanelProps {
   open: boolean;
@@ -12,17 +13,28 @@ interface PinnedMessagesPanelProps {
 const PinnedMessagesPanel = ({ open, onClose, members }: PinnedMessagesPanelProps) => {
   const { getPinnedMessages, unpinMessage, activeChannelId, channels } = useChatContext();
   const [pinned, setPinned] = useState<Message[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const activeChannelName = channels.find((c) => c.id === activeChannelId)?.name || "current channel";
 
   useEffect(() => {
     if (!open || !activeChannelId) return;
     setLoading(true);
+    let cancelled = false;
     getPinnedMessages().then((msgs) => {
+      if (cancelled) return;
       setPinned(msgs);
       setLoading(false);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [open, activeChannelId, getPinnedMessages]);
+
+  useEffect(() => {
+    if (!open) {
+      setLoading(true);
+    }
+  }, [open]);
 
   const handleUnpin = async (id: string) => {
     await unpinMessage(id);
@@ -35,7 +47,7 @@ const PinnedMessagesPanel = ({ open, onClose, members }: PinnedMessagesPanelProp
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-16" onClick={onClose}>
       <div className="absolute inset-0 bg-black/65 backdrop-blur-[2px]" />
       <div
-        className="relative bg-card border border-border rounded-xl w-[min(720px,calc(100vw-1.5rem))] max-h-[78vh] flex flex-col shadow-2xl overflow-hidden"
+        className="relative bg-card border border-border rounded-xl w-[min(720px,calc(100vw-1.5rem))] h-[78vh] max-h-[78vh] flex flex-col shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-5 py-4 border-b border-border bg-gradient-to-r from-primary/10 via-secondary/30 to-transparent">
@@ -59,11 +71,24 @@ const PinnedMessagesPanel = ({ open, onClose, members }: PinnedMessagesPanelProp
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {loading && (
-            <>
-              <div className="h-20 rounded-xl border border-border/60 bg-secondary/40 animate-pulse" />
-              <div className="h-20 rounded-xl border border-border/60 bg-secondary/30 animate-pulse" />
-              <div className="h-20 rounded-xl border border-border/60 bg-secondary/20 animate-pulse" />
-            </>
+            <div className="space-y-3">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="rounded-xl border border-border/60 bg-background/70 p-3 space-y-2.5">
+                  <div className="flex items-start gap-3">
+                    <Skeleton className="h-9 w-9 rounded-full shrink-0 mt-0.5" />
+                    <div className="flex-1 space-y-2">
+                      <Skeleton className="h-3.5" style={{ width: `${24 + (i * 9) % 20}%` }} />
+                      <Skeleton className="h-3" style={{ width: `${36 + (i * 7) % 24}%` }} />
+                    </div>
+                    <Skeleton className="h-7 w-14 rounded-md shrink-0" />
+                  </div>
+                  <Skeleton className="h-3.5" style={{ width: `${52 + (i * 8) % 28}%` }} />
+                  {i % 3 === 1 && (
+                    <Skeleton className="h-24 rounded-md" style={{ width: 184 + ((i * 11) % 32) }} />
+                  )}
+                </div>
+              ))}
+            </div>
           )}
 
           {!loading && pinned.length === 0 && (

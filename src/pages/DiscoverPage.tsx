@@ -9,6 +9,7 @@ import BanAppealDialog from "@/components/chat/BanAppealDialog";
 import BottomLeftDock from "@/components/chat/BottomLeftDock";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { DiscoverGridSkeleton } from "@/components/skeletons/AppSkeletons";
 
 interface DiscoverServer {
   id: string;
@@ -123,7 +124,7 @@ const DiscoverPage = () => {
             />
           </div>
 
-          {loading && <p className="text-sm text-muted-foreground">Loading servers...</p>}
+          {loading && <DiscoverGridSkeleton />}
 
           {!loading && results.length === 0 && (
             <div className="text-sm text-muted-foreground bg-secondary/40 rounded-md p-4 border border-border/60">

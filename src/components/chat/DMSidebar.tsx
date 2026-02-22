@@ -6,6 +6,8 @@ import { Search, Users, X } from "lucide-react";
 import StatusIndicator from "./StatusIndicator";
 import { getEffectiveStatus } from "@/lib/presence";
 import BottomLeftDock from "./BottomLeftDock";
+import { DMSidebarSkeleton } from "@/components/skeletons/AppSkeletons";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type DMSidebarProps = {
   embedded?: boolean;
@@ -21,10 +23,15 @@ const DMSidebar = ({ embedded = false, onNavigate }: DMSidebarProps) => {
     startConversation,
     isFriendsView,
     setIsFriendsView,
+    loadingConversations,
   } = useDMContext();
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
+
+  if (loadingConversations && conversations.length === 0 && !searchQuery) {
+    return <DMSidebarSkeleton embedded={embedded} />;
+  }
 
   const handleSearch = async (query: string) => {
     setSearchQuery(query);
@@ -77,7 +84,24 @@ const DMSidebar = ({ embedded = false, onNavigate }: DMSidebarProps) => {
         {/* Search results */}
         {searchQuery && (
           <div className="mt-1 bg-card border border-border rounded-md overflow-hidden">
-            {searching && <p className="text-xs text-muted-foreground px-3 py-2">Searching...</p>}
+            {searching && (
+              <div className="space-y-2.5 p-2.5">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="space-y-2 px-1 py-2">
+                    <div className="flex items-center gap-3">
+                    <Skeleton className="h-9 w-9 rounded-full shrink-0" />
+                    <div className="space-y-2 flex-1">
+                      <Skeleton className="h-3.5 w-20" />
+                      <Skeleton className="h-3 w-14" />
+                    </div>
+                    </div>
+                    {i === 1 && (
+                      <Skeleton className="h-20 w-36 rounded-md ml-12" />
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
             {!searching && searchResults.length === 0 && <p className="text-xs text-muted-foreground px-3 py-2">No users found</p>}
             {searchResults.map((p) => {
               const initials = p.display_name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();

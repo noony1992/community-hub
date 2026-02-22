@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useChatContext } from "@/context/ChatContext";
 import { X, User, Bell } from "lucide-react";
+import { DialogListSkeleton } from "@/components/skeletons/AppSkeletons";
 
 interface ProfileDialogProps {
   open: boolean;
@@ -267,7 +268,7 @@ const ProfileDialog = ({ open, onClose }: ProfileDialogProps) => {
             Notification Settings
           </p>
           {loadingNotificationSettings ? (
-            <p className="text-xs text-muted-foreground">Loading notification settings...</p>
+            <DialogListSkeleton rows={3} />
           ) : (
             <div className="space-y-3">
               <label className="flex items-center justify-between text-xs">

@@ -13,6 +13,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { DialogListSkeleton } from "@/components/skeletons/AppSkeletons";
 
 type TargetUser = {
   id: string;
@@ -642,7 +643,7 @@ const UserModerationSidebar = ({ open, onClose, serverId, user }: UserModeration
           {canOpenModMenu && (
             <div className="rounded-md border border-border p-3 space-y-2">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">Recent Chat History</p>
-              {loading && <p className="text-sm text-muted-foreground">Loading history...</p>}
+              {loading && <DialogListSkeleton rows={3} />}
               {!loading && recentMessages.length === 0 && (
                 <p className="text-sm text-muted-foreground">No recent messages found.</p>
               )}

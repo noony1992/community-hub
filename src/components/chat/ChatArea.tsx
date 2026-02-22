@@ -1,4 +1,4 @@
-import { Fragment, useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { Fragment, useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from "react";
 import { useChatContext, type Message } from "@/context/ChatContext";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -14,8 +14,10 @@ import MentionAutocomplete, { renderContentWithMentions } from "./MentionAutocom
 import UserProfileCard from "./UserProfileCard";
 import { useVoiceContext } from "@/context/VoiceContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 import { encodeForumTopic, encodePoll, encodeQuestion, parseMessageFeatures, type ForumTopicDefinition, type PollDefinition } from "@/lib/messageFeatures";
 import { useSearchParams } from "react-router-dom";
+import { ChatAreaSkeleton } from "@/components/skeletons/AppSkeletons";
 
 type ServerEvent = {
   id: string;
@@ -66,7 +68,7 @@ const ChatArea = ({
 }: ChatAreaProps) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
-  const { activeChannelId, activeServerId, channels, messages, sendMessage, scheduleMessage, editMessage, deleteMessage, members, profile, typingUsers, setTyping, addReaction, pinMessage, unpinMessage, moderationState, servers, unreadCountByChannel, channelLastReadAtByChannel, markChannelAsRead, setActiveChannel } = useChatContext();
+  const { activeChannelId, activeServerId, channels, messages, sendMessage, scheduleMessage, editMessage, deleteMessage, members, profile, typingUsers, setTyping, addReaction, pinMessage, unpinMessage, moderationState, servers, unreadCountByChannel, channelLastReadAtByChannel, markChannelAsRead, setActiveChannel, loadingChannels, loadingMessages } = useChatContext();
   const {
     isConnected,
     activeVoiceChannelId,
@@ -667,7 +669,7 @@ const ChatArea = ({
     }
   }, [activeServerId, loadOnboardingState, onboardingCustomChecks, onboardingCustomCompletedIds, onboardingStepStatus, user?.id]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     shouldAutoScrollRef.current = true;
     setShowThreadPanel(false);
     setThreadMessage(null);
@@ -1297,6 +1299,10 @@ const ChatArea = ({
     if (activeChannelId === activeVoiceChannelId) return;
     setActiveChannel(activeVoiceChannelId);
   }, [activeChannelId, activeVoiceChannelId, channels, setActiveChannel]);
+
+  if (activeServerId && (loadingChannels || (activeChannelId && loadingMessages))) {
+    return <ChatAreaSkeleton forum={isForumChannelView} />;
+  }
 
   if (isVoiceChannelView) {
     const connectedToSelected = isConnected && activeVoiceChannelId === activeChannelId;
@@ -1946,6 +1952,7 @@ const ChatArea = ({
               threadSummaries={threadSummaries}
               onThreadSeen={markThreadAsSeen}
               members={memberMap}
+              desktopOverlay
             />
           )
         )}
@@ -1990,7 +1997,10 @@ const ChatArea = ({
           </div>
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <button
-              onClick={() => setShowEventsModal(true)}
+              onClick={() => {
+                setLoadingEvents(true);
+                setShowEventsModal(true);
+              }}
               className="text-muted-foreground hover:text-foreground transition-colors"
               title="Events Calendar"
             >
@@ -2575,12 +2585,18 @@ const ChatArea = ({
             </div>
           </DialogContent>
         </Dialog>
-        <Dialog open={showEventsModal} onOpenChange={setShowEventsModal}>
-          <DialogContent className="max-w-3xl">
+        <Dialog
+          open={showEventsModal}
+          onOpenChange={(open) => {
+            if (open) setLoadingEvents(true);
+            setShowEventsModal(open);
+          }}
+        >
+          <DialogContent className="max-w-3xl h-[78vh] flex flex-col">
             <DialogHeader>
               <DialogTitle>Events Calendar</DialogTitle>
             </DialogHeader>
-            <div className="space-y-4">
+            <div className="flex-1 min-h-0 space-y-4 overflow-hidden">
               <div className="rounded-md border border-border/60 bg-secondary/20 p-3 space-y-2">
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Create Event</p>
                 {!canCreateEvents && (
@@ -2638,7 +2654,7 @@ const ChatArea = ({
                 )}
               </div>
 
-              <div className="rounded-md border border-border/60 bg-background/70 p-3 max-h-[420px] overflow-y-auto space-y-3">
+              <div className="flex-1 min-h-0 rounded-md border border-border/60 bg-background/70 p-3 overflow-y-auto space-y-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Upcoming Events</p>
                   <button
@@ -2648,7 +2664,38 @@ const ChatArea = ({
                     Refresh
                   </button>
                 </div>
-                {loadingEvents && <p className="text-sm text-muted-foreground">Loading events...</p>}
+                {loadingEvents && (
+                  <div className="space-y-3">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                      <div key={i} className="rounded-xl border border-border/60 bg-background/70 p-3 space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 space-y-2">
+                            <Skeleton className="h-4" style={{ width: `${30 + (i * 8) % 20}%` }} />
+                            <Skeleton className="h-3.5" style={{ width: `${50 + (i * 7) % 24}%` }} />
+                            <Skeleton className="h-3.5" style={{ width: `${26 + (i * 9) % 18}%` }} />
+                            {i % 2 === 1 && (
+                              <Skeleton className="h-20 rounded-md" style={{ width: 176 + ((i * 13) % 36) }} />
+                            )}
+                            <div className="flex items-center gap-2.5 pt-1">
+                              <Skeleton className="h-8 w-8 rounded-full shrink-0" />
+                              <Skeleton className="h-3.5" style={{ width: `${22 + (i * 6) % 14}%` }} />
+                            </div>
+                          </div>
+                          <div className="space-y-2.5">
+                            <Skeleton className="h-3 w-12" />
+                            <Skeleton className="h-3 w-10" />
+                            <Skeleton className="h-3 w-14" />
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Skeleton className="h-8 w-14 rounded-md" />
+                          <Skeleton className="h-8 w-16 rounded-md" />
+                          <Skeleton className="h-8 w-12 rounded-md" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {!loadingEvents && events.length === 0 && (
                   <p className="text-sm text-muted-foreground">No events scheduled.</p>
                 )}
@@ -2788,6 +2835,7 @@ const ChatArea = ({
             threadSummaries={threadSummaries}
             onThreadSeen={markThreadAsSeen}
             members={memberMap}
+            desktopOverlay
           />
         )
       )}

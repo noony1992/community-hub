@@ -23,6 +23,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ChannelSidebarSkeleton } from "@/components/skeletons/AppSkeletons";
 
 type ChannelSidebarProps = {
   embedded?: boolean;
@@ -32,7 +33,7 @@ type ChannelSidebarProps = {
 const ChannelSidebar = ({ embedded = false, onNavigate }: ChannelSidebarProps) => {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { activeServerId, activeChannelId, setActiveChannel, channels, channelGroups, servers, members, refreshServers, unreadCountByChannel } = useChatContext();
+  const { activeServerId, activeChannelId, setActiveChannel, channels, channelGroups, servers, members, refreshServers, unreadCountByChannel, loadingChannels } = useChatContext();
   const {
     activeVoiceChannelId,
     isConnected,
@@ -68,6 +69,10 @@ const ChannelSidebar = ({ embedded = false, onNavigate }: ChannelSidebarProps) =
   const isOwner = !!user && !!server && server.owner_id === user.id;
   const currentMember = members.find((m) => m.id === user?.id);
   const canManageChannels = isOwner || (currentMember?.role_permissions || []).includes("manage_channels");
+
+  if (activeServerId && loadingChannels) {
+    return <ChannelSidebarSkeleton embedded={embedded} />;
+  }
 
   const handleTextChannelClick = (channelId: string) => {
     setActiveChannel(channelId);

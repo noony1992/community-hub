@@ -27,6 +27,8 @@ interface DMState {
   conversations: DMConversation[];
   activeConversationId: string | null;
   dmMessages: DMMessage[];
+  loadingConversations: boolean;
+  loadingDmMessages: boolean;
   setActiveConversation: (id: string | null) => void;
   sendDM: (content: string) => Promise<void>;
   startConversation: (otherUserId: string) => Promise<string | null>;
@@ -50,6 +52,8 @@ export const DMProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [conversations, setConversations] = useState<DMConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [dmMessages, setDmMessages] = useState<DMMessage[]>([]);
+  const [loadingConversations, setLoadingConversations] = useState(false);
+  const [loadingDmMessages, setLoadingDmMessages] = useState(false);
   const [isDMMode, setIsDMMode] = useState(false);
   const [isFriendsView, setIsFriendsView] = useState(false);
   const dmRetryQueueRef = useRef(new RetryQueue());
@@ -60,7 +64,11 @@ export const DMProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   }, []);
 
   const loadConversations = useCallback(async () => {
-    if (!user) return;
+    if (!user) {
+      setLoadingConversations(false);
+      return;
+    }
+    setLoadingConversations(true);
     // Get conversations the user is part of
     const { data: participations, error: participationsError } = await supabase
       .from("dm_participants")
@@ -69,11 +77,13 @@ export const DMProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
     if (participationsError) {
       console.error("Failed to load DM participations:", participationsError.message);
+      setLoadingConversations(false);
       return;
     }
 
     if (!participations || participations.length === 0) {
       setConversations([]);
+      setLoadingConversations(false);
       return;
     }
 
@@ -87,10 +97,14 @@ export const DMProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
     if (allParticipantsError) {
       console.error("Failed to load DM participants:", allParticipantsError.message);
+      setLoadingConversations(false);
       return;
     }
 
-    if (!allParticipants) return;
+    if (!allParticipants) {
+      setLoadingConversations(false);
+      return;
+    }
 
     const otherUserIds = allParticipants
       .filter((p: any) => p.user_id !== user.id)
@@ -98,6 +112,7 @@ export const DMProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
     if (otherUserIds.length === 0) {
       setConversations([]);
+      setLoadingConversations(false);
       return;
     }
 
@@ -109,6 +124,7 @@ export const DMProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
     if (profilesError) {
       console.error("Failed to load DM profiles:", profilesError.message);
+      setLoadingConversations(false);
       return;
     }
 
@@ -128,6 +144,7 @@ export const DMProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
     const uniqueConversations = Array.from(new Map(convs.map((c) => [c.id, c])).values());
     setConversations(uniqueConversations);
+    setLoadingConversations(false);
   }, [user]);
 
   useEffect(() => {
@@ -156,7 +173,12 @@ export const DMProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   // Load DM messages + realtime
   useEffect(() => {
-    if (!activeConversationId) { setDmMessages([]); return; }
+    if (!activeConversationId) {
+      setDmMessages([]);
+      setLoadingDmMessages(false);
+      return;
+    }
+    setLoadingDmMessages(true);
 
     const load = async () => {
       const { data, error } = await supabase
@@ -167,9 +189,11 @@ export const DMProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         .limit(100);
       if (error) {
         console.error("Failed to load direct messages:", error.message);
+        setLoadingDmMessages(false);
         return;
       }
       setDmMessages((data || []) as DMMessage[]);
+      setLoadingDmMessages(false);
     };
     load();
 
@@ -390,6 +414,8 @@ export const DMProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       conversations,
       activeConversationId,
       dmMessages,
+      loadingConversations,
+      loadingDmMessages,
       setActiveConversation,
       sendDM,
       startConversation,

@@ -4,6 +4,7 @@ import { useChatContext } from "@/context/ChatContext";
 import { useDMContext } from "@/context/DMContext";
 import { Plus, MessageCircle, LogIn, Compass } from "lucide-react";
 import JoinServerDialog from "./JoinServerDialog";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type ServerSidebarProps = {
   mode?: "rail" | "sheet";
@@ -11,7 +12,7 @@ type ServerSidebarProps = {
 };
 
 const ServerSidebar = ({ mode = "rail", onNavigate }: ServerSidebarProps) => {
-  const { servers, activeServerId, setActiveServer, createServer, refreshServers } = useChatContext();
+  const { servers, activeServerId, setActiveServer, createServer, loadingServers } = useChatContext();
   const { isDMMode, setIsDMMode, setActiveConversation } = useDMContext();
   const navigate = useNavigate();
   const location = useLocation();
@@ -92,7 +93,13 @@ const ServerSidebar = ({ mode = "rail", onNavigate }: ServerSidebarProps) => {
               Servers
             </p>
             <div className="space-y-1">
-              {servers.map((server) => {
+              {loadingServers && Array.from({ length: 6 }).map((_, idx) => (
+                <div key={`server-skeleton-${idx}`} className="flex items-center gap-3 px-2 py-2.5">
+                  <Skeleton className="h-8 w-8 rounded-md shrink-0" />
+                  <Skeleton className="h-5 w-24" />
+                </div>
+              ))}
+              {!loadingServers && servers.map((server) => {
                 const isActive = server.id === activeServerId && !isDMMode && !isDiscoverRoute;
                 return (
                   <button
@@ -198,7 +205,13 @@ const ServerSidebar = ({ mode = "rail", onNavigate }: ServerSidebarProps) => {
 
       <div className="w-8 h-[2px] bg-border rounded-full" />
 
-      {servers.map((server) => {
+      {loadingServers && Array.from({ length: 7 }).map((_, idx) => (
+        <div key={`server-rail-skeleton-${idx}`} className="relative group flex items-center">
+          <Skeleton className="w-12 h-12 rounded-2xl" />
+        </div>
+      ))}
+
+      {!loadingServers && servers.map((server) => {
         const isActive = server.id === activeServerId && !isDMMode && !isDiscoverRoute;
         return (
           <div key={server.id} className="relative group flex items-center">

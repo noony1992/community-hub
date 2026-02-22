@@ -12,6 +12,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ProfilePageSkeleton } from "@/components/skeletons/AppSkeletons";
 
 type ProfileRecord = {
   id: string;
@@ -371,7 +372,7 @@ const ProfilePage = () => {
   };
 
   if (loading) {
-    return <div className="min-h-screen bg-chat-area flex items-center justify-center text-muted-foreground">Loading profile...</div>;
+    return <ProfilePageSkeleton />;
   }
 
   if (!profile) {

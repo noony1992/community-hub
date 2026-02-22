@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useChatContext, type MessageSearchResult } from "@/context/ChatContext";
 import { Search, X, Hash } from "lucide-react";
 import { format } from "date-fns";
+import { DialogListSkeleton } from "@/components/skeletons/AppSkeletons";
 
 interface SearchDialogProps {
   open: boolean;
@@ -115,7 +116,9 @@ const SearchDialog = ({ open, onClose }: SearchDialogProps) => {
 
         <div className="flex-1 overflow-y-auto p-2">
           {loading && (
-            <p className="text-sm text-muted-foreground text-center py-4">Searching...</p>
+            <div className="py-2">
+              <DialogListSkeleton rows={4} />
+            </div>
           )}
           {!loading && results.length === 0 && (query || userFilter || channelFilter || dateFilter || hasAttachment || pinnedOnly) && (
             <p className="text-sm text-muted-foreground text-center py-4">No results found</p>

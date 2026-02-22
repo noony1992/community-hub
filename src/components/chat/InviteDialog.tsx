@@ -13,6 +13,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { DialogListSkeleton } from "@/components/skeletons/AppSkeletons";
 
 interface InviteDialogProps {
   open: boolean;
@@ -250,7 +251,7 @@ const InviteDialog = ({ open, onClose }: InviteDialogProps) => {
           </button>
         </div>
 
-        {loading && <p className="text-sm text-muted-foreground">Loading invites...</p>}
+        {loading && <DialogListSkeleton rows={4} />}
 
         {!loading && !canManageInvites && (
           <div className="rounded-md border border-border p-4">
