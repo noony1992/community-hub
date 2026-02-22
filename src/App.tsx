@@ -2,10 +2,11 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { ChatProvider } from "@/context/ChatContext";
 import { DMProvider } from "@/context/DMContext";
+import { VoiceProvider } from "@/context/VoiceContext";
 import GlobalAlertModalProvider from "@/components/system/GlobalAlertModalProvider";
 import Index from "./pages/Index";
 import AuthPage from "./pages/AuthPage";
@@ -30,6 +31,18 @@ const AuthRoute = ({ children }: { children: React.ReactNode }) => {
   return <>{children}</>;
 };
 
+const ProtectedAppLayout = () => (
+  <ProtectedRoute>
+    <ChatProvider>
+      <VoiceProvider>
+        <DMProvider>
+          <Outlet />
+        </DMProvider>
+      </VoiceProvider>
+    </ChatProvider>
+  </ProtectedRoute>
+);
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
@@ -40,30 +53,12 @@ const App = () => (
           <BrowserRouter>
             <Routes>
               <Route path="/auth" element={<AuthRoute><AuthPage /></AuthRoute>} />
-              <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
-              <Route
-                path="/discover"
-                element={
-                  <ProtectedRoute>
-                    <ChatProvider>
-                      <DMProvider>
-                        <DiscoverPage />
-                      </DMProvider>
-                    </ChatProvider>
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/servers/:serverId/settings"
-                element={
-                  <ProtectedRoute>
-                    <ChatProvider>
-                      <ServerSettingsPage />
-                    </ChatProvider>
-                  </ProtectedRoute>
-                }
-              />
-              <Route path="/profile/:userId" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+              <Route element={<ProtectedAppLayout />}>
+                <Route path="/" element={<Index />} />
+                <Route path="/discover" element={<DiscoverPage />} />
+                <Route path="/servers/:serverId/settings" element={<ServerSettingsPage />} />
+                <Route path="/profile/:userId" element={<ProfilePage />} />
+              </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>

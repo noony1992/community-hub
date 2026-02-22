@@ -54,6 +54,20 @@ interface ChannelGroup {
   created_at: string;
 }
 
+type ActiveTemporaryRoleGrant = {
+  user_id: string;
+  role_id: string;
+  expires_at: string | null;
+};
+
+type RolePermissionOverride = {
+  role_id: string;
+  scope_type: "group" | "channel";
+  scope_id: string;
+  allow_permissions: string[];
+  deny_permissions: string[];
+};
+
 export interface Message {
   id: string;
   channel_id: string;
@@ -174,10 +188,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const desiredTypingStateRef = useRef(false);
   const lastTrackedTypingStateRef = useRef<boolean | null>(null);
   const membersRef = useRef<Profile[]>([]);
+  const channelsRef = useRef<Channel[]>([]);
+  const activeServerIdRef = useRef<string | null>(null);
+  const activeChannelIdRef = useRef<string | null>(null);
   const profileRef = useRef<Profile | null>(null);
   const userIdRef = useRef<string | null>(null);
   const messagesRef = useRef<Message[]>([]);
   const messageRetryQueueRef = useRef(new RetryQueue());
+  const hasLoadedServersRef = useRef(false);
 
   useEffect(() => {
     membersRef.current = members;
@@ -186,6 +204,18 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    channelsRef.current = channels;
+  }, [channels]);
+
+  useEffect(() => {
+    activeServerIdRef.current = activeServerId;
+  }, [activeServerId]);
+
+  useEffect(() => {
+    activeChannelIdRef.current = activeChannelId;
+  }, [activeChannelId]);
 
   useEffect(() => {
     profileRef.current = profile;
@@ -197,6 +227,28 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     ...entry,
     status: getEffectiveStatus(entry.status, entry.updated_at),
   }), []);
+  const hasRenderableProfileChange = useCallback((prev: Profile, next: Profile) => (
+    prev.status !== next.status ||
+    prev.username !== next.username ||
+    prev.display_name !== next.display_name ||
+    prev.avatar_url !== next.avatar_url
+  ), []);
+  const sameServerList = useCallback((prev: Server[], next: Server[]) => (
+    prev.length === next.length &&
+    prev.every((server, index) => {
+      const rhs = next[index];
+      return !!rhs &&
+        server.id === rhs.id &&
+        server.name === rhs.name &&
+        server.icon === rhs.icon &&
+        server.icon_url === rhs.icon_url &&
+        server.banner_url === rhs.banner_url &&
+        server.is_discoverable === rhs.is_discoverable &&
+        server.color === rhs.color &&
+        server.owner_id === rhs.owner_id &&
+        server.owner_group_name === rhs.owner_group_name;
+    })
+  ), []);
 
   useEffect(() => {
     if (!activeServerId) return;
@@ -219,32 +271,39 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const isMember = membersRef.current.some((member) => member.id === next.id);
           if (!isMember) return;
 
-          setMembers((prev) =>
-            prev.map((member) =>
-              member.id === next.id
-                ? applyEffectivePresence({
-                    ...member,
-                    status: next.status ?? member.status,
-                    username: next.username ?? member.username,
-                    display_name: next.display_name ?? member.display_name,
-                    avatar_url: next.avatar_url === undefined ? member.avatar_url : next.avatar_url,
-                    updated_at: next.updated_at ?? member.updated_at,
-                  })
-                : member,
-            ),
-          );
+          setMembers((prev) => {
+            let changed = false;
+            const updated = prev.map((member) => {
+              if (member.id !== next.id) return member;
+              const merged = applyEffectivePresence({
+                ...member,
+                status: next.status ?? member.status,
+                username: next.username ?? member.username,
+                display_name: next.display_name ?? member.display_name,
+                avatar_url: next.avatar_url === undefined ? member.avatar_url : next.avatar_url,
+                updated_at: next.updated_at ?? member.updated_at,
+              });
+              if (!hasRenderableProfileChange(member, merged)) return member;
+              changed = true;
+              return merged;
+            });
+            return changed ? updated : prev;
+          });
 
           if (userIdRef.current === next.id) {
             setProfile((prev) =>
               prev
-                ? applyEffectivePresence({
-                    ...prev,
-                    status: next.status ?? prev.status,
-                    username: next.username ?? prev.username,
-                    display_name: next.display_name ?? prev.display_name,
-                    avatar_url: next.avatar_url === undefined ? prev.avatar_url : next.avatar_url,
-                    updated_at: next.updated_at ?? prev.updated_at,
-                  })
+                ? (() => {
+                    const merged = applyEffectivePresence({
+                      ...prev,
+                      status: next.status ?? prev.status,
+                      username: next.username ?? prev.username,
+                      display_name: next.display_name ?? prev.display_name,
+                      avatar_url: next.avatar_url === undefined ? prev.avatar_url : next.avatar_url,
+                      updated_at: next.updated_at ?? prev.updated_at,
+                    });
+                    return hasRenderableProfileChange(prev, merged) ? merged : prev;
+                  })()
                 : prev,
             );
           }
@@ -255,7 +314,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       supabase.removeChannel(statusChannel);
     };
-  }, [activeServerId, applyEffectivePresence]);
+  }, [activeServerId, applyEffectivePresence, hasRenderableProfileChange]);
 
   useEffect(() => {
     if (!activeServerId) return;
@@ -272,11 +331,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!data || data.length === 0) return;
       const statusById = new Map(data.map((row) => [row.id, row]));
 
-      setMembers((prev) =>
-        prev.map((member) => {
+      setMembers((prev) => {
+        let changed = false;
+        const updated = prev.map((member) => {
           const next = statusById.get(member.id);
           if (!next) return member;
-          return applyEffectivePresence({
+          const merged = applyEffectivePresence({
             ...member,
             status: next.status ?? member.status,
             username: next.username ?? member.username,
@@ -284,22 +344,29 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             avatar_url: next.avatar_url === undefined ? member.avatar_url : next.avatar_url,
             updated_at: next.updated_at ?? member.updated_at,
           });
-        }),
-      );
+          if (!hasRenderableProfileChange(member, merged)) return member;
+          changed = true;
+          return merged;
+        });
+        return changed ? updated : prev;
+      });
 
       if (userIdRef.current) {
         const nextSelf = statusById.get(userIdRef.current);
         if (nextSelf) {
           setProfile((prev) =>
             prev
-              ? applyEffectivePresence({
-                  ...prev,
-                  status: nextSelf.status ?? prev.status,
-                  username: nextSelf.username ?? prev.username,
-                  display_name: nextSelf.display_name ?? prev.display_name,
-                  avatar_url: nextSelf.avatar_url === undefined ? prev.avatar_url : nextSelf.avatar_url,
-                  updated_at: nextSelf.updated_at ?? prev.updated_at,
-                })
+              ? (() => {
+                  const merged = applyEffectivePresence({
+                    ...prev,
+                    status: nextSelf.status ?? prev.status,
+                    username: nextSelf.username ?? prev.username,
+                    display_name: nextSelf.display_name ?? prev.display_name,
+                    avatar_url: nextSelf.avatar_url === undefined ? prev.avatar_url : nextSelf.avatar_url,
+                    updated_at: nextSelf.updated_at ?? prev.updated_at,
+                  });
+                  return hasRenderableProfileChange(prev, merged) ? merged : prev;
+                })()
               : prev,
           );
         }
@@ -322,7 +389,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [activeServerId, applyEffectivePresence]);
+  }, [activeServerId, applyEffectivePresence, hasRenderableProfileChange]);
 
   const fetchModerationState = useCallback(async (serverId: string) => {
     if (!user) {
@@ -383,7 +450,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshServers = useCallback(async () => {
     if (!user) return;
-    setLoadingServers(true);
+    const shouldToggleLoading = !hasLoadedServersRef.current;
+    if (shouldToggleLoading) {
+      setLoadingServers(true);
+    }
+
     const { data: memberships } = await supabase
       .from("server_members")
       .select("server_id")
@@ -392,55 +463,50 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const rawServerIds = Array.from(new Set((memberships || []).map((m) => m.server_id)));
     const serverIds = await filterOutBannedServerIds(rawServerIds);
     if (serverIds.length === 0) {
+      setServers((prev) => (prev.length === 0 ? prev : []));
+      if (activeServerIdRef.current !== null) {
+        setActiveServerId(null);
+        setActiveChannelId(null);
+      }
+      hasLoadedServersRef.current = true;
+      if (shouldToggleLoading) {
+        setLoadingServers(false);
+      }
+      return;
+    }
+
+    const { data } = await supabase.from("servers").select("*").in("id", serverIds);
+    const serverList = (data || []) as Server[];
+    setServers((prev) => (sameServerList(prev, serverList) ? prev : serverList));
+
+    // Keep active server in sync after leave/delete operations.
+    const currentActiveServerId = activeServerIdRef.current;
+    if (serverList.length === 0) {
+      if (currentActiveServerId !== null) {
+        setActiveServerId(null);
+        setActiveChannelId(null);
+      }
+    } else if (!currentActiveServerId || !serverList.some((s) => s.id === currentActiveServerId)) {
+      setActiveServerId(serverList[0].id);
+    }
+
+    hasLoadedServersRef.current = true;
+    if (shouldToggleLoading) {
+      setLoadingServers(false);
+    }
+  }, [filterOutBannedServerIds, sameServerList, user]);
+
+  useEffect(() => {
+    if (!user) {
+      hasLoadedServersRef.current = false;
       setServers([]);
       setActiveServerId(null);
       setActiveChannelId(null);
       setLoadingServers(false);
       return;
     }
-
-    const { data } = await supabase.from("servers").select("*").in("id", serverIds);
-    const serverList = (data || []) as Server[];
-    setServers(serverList);
-
-    // Keep active server in sync after leave/delete operations.
-    if (serverList.length === 0) {
-      setActiveServerId(null);
-      setActiveChannelId(null);
-    } else if (!activeServerId || !serverList.some((s) => s.id === activeServerId)) {
-      setActiveServerId(serverList[0].id);
-    }
-
-    setLoadingServers(false);
-  }, [user, activeServerId, filterOutBannedServerIds]);
-
-  useEffect(() => {
-    if (!user) return;
-    const load = async () => {
-      setLoadingServers(true);
-      const { data: memberships } = await supabase
-        .from("server_members")
-        .select("server_id")
-        .eq("user_id", user.id);
-
-      const rawServerIds = Array.from(new Set((memberships || []).map((m) => m.server_id)));
-      const serverIds = await filterOutBannedServerIds(rawServerIds);
-      if (serverIds.length === 0) {
-        setServers([]);
-        setActiveServerId(null);
-        setActiveChannelId(null);
-        setLoadingServers(false);
-        return;
-      }
-
-      const { data } = await supabase.from("servers").select("*").in("id", serverIds);
-      const serverList = (data || []) as Server[];
-      setServers(serverList);
-      if (serverList.length > 0 && !activeServerId) setActiveServerId(serverList[0].id);
-      setLoadingServers(false);
-    };
-    load();
-  }, [user, activeServerId, filterOutBannedServerIds]);
+    void refreshServers();
+  }, [refreshServers, user]);
 
   useEffect(() => {
     if (!user) return;
@@ -477,20 +543,18 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     };
 
-    const refreshId = window.setInterval(() => {
-      void refreshServers();
-    }, 8000);
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
-      window.clearInterval(refreshId);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [user, refreshServers]);
 
   const refreshChannels = useCallback(async () => {
     if (!activeServerId) return;
-    const { data } = await supabase.from("channels").select("*").eq("server_id", activeServerId);
+    const requestServerId = activeServerId;
+    const { data } = await supabase.from("channels").select("*").eq("server_id", requestServerId);
+    if (activeServerIdRef.current !== requestServerId) return;
     setChannels((data || []) as Channel[]);
   }, [activeServerId]);
 
@@ -569,12 +633,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshChannelGroups = useCallback(async () => {
     if (!activeServerId) return;
+    const requestServerId = activeServerId;
     const { data } = await supabase
       .from("channel_groups")
       .select("*")
-      .eq("server_id", activeServerId)
+      .eq("server_id", requestServerId)
       .order("position", { ascending: true })
       .order("created_at", { ascending: true });
+    if (activeServerIdRef.current !== requestServerId) return;
     setChannelGroups((data || []) as ChannelGroup[]);
   }, [activeServerId]);
 
@@ -585,7 +651,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
-    const textChannelIds = channels.filter((c) => c.type === "text").map((c) => c.id);
+    const textChannelIds = channels
+      .filter((c) => c.type === "text" || c.type === "forum")
+      .map((c) => c.id);
     if (textChannelIds.length === 0) {
       setUnreadCountByChannel({});
       setChannelLastReadAtByChannel({});
@@ -659,6 +727,45 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUnreadCountByChannel((prev) => ({ ...prev, [targetChannelId]: 0 }));
   }, [activeChannelId, user?.id]);
 
+  const resolveEffectivePermissions = useCallback(
+    (
+      basePermissions: string[],
+      roleIds: string[],
+      overrides: RolePermissionOverride[],
+      activeScope: { channelId: string | null; groupId: string | null },
+    ) => {
+      const next = new Set(basePermissions);
+      const activeRoleIds = new Set(roleIds);
+
+      const applyScope = (scopeType: "group" | "channel", scopeId: string | null) => {
+        if (!scopeId) return;
+        const relevant = overrides.filter(
+          (override) =>
+            override.scope_type === scopeType &&
+            override.scope_id === scopeId &&
+            activeRoleIds.has(override.role_id),
+        );
+        relevant.forEach((override) => {
+          (override.deny_permissions || []).forEach((permission) => {
+            next.delete(permission);
+          });
+        });
+        relevant.forEach((override) => {
+          (override.allow_permissions || []).forEach((permission) => {
+            next.add(permission);
+          });
+        });
+      };
+
+      // Group applies first, channel applies second so channel-level config wins.
+      applyScope("group", activeScope.groupId);
+      applyScope("channel", activeScope.channelId);
+
+      return Array.from(next);
+    },
+    [],
+  );
+
   const loadMembers = useCallback(async () => {
     if (!activeServerId) return;
     const activeServer = servers.find((s) => s.id === activeServerId);
@@ -674,22 +781,89 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const userIds = memberships.map((m) => m.user_id);
-    const { data: profiles } = await supabase.from("profiles").select("*").in("id", userIds);
-    const { data: serverRoles } = await supabase
-      .from("server_roles")
-      .select("name, color, position, permissions")
-      .eq("server_id", activeServerId);
+    const nowIso = new Date().toISOString();
+    const activeChannelForPermissions = channelsRef.current.find((channel) => channel.id === activeChannelIdRef.current) || null;
+    const activeGroupIdForPermissions = activeChannelForPermissions?.group_id || null;
 
-    const roleMap = new Map<string, { color: string; position: number; permissions: string[] }>();
+    const overrideScopeFilter = activeChannelForPermissions
+      ? activeGroupIdForPermissions
+        ? `and(scope_type.eq.channel,scope_id.eq.${activeChannelForPermissions.id}),and(scope_type.eq.group,scope_id.eq.${activeGroupIdForPermissions})`
+        : `and(scope_type.eq.channel,scope_id.eq.${activeChannelForPermissions.id})`
+      : null;
+
+    const [
+      { data: profiles },
+      { data: serverRoles },
+      { data: temporaryRoleGrantRows },
+      { data: overrideRows },
+    ] = await Promise.all([
+      supabase.from("profiles").select("*").in("id", userIds),
+      supabase
+        .from("server_roles")
+        .select("id, name, color, position, permissions")
+        .eq("server_id", activeServerId),
+      (supabase as any)
+        .from("server_temporary_role_grants")
+        .select("user_id, role_id, expires_at")
+        .eq("server_id", activeServerId)
+        .or(`expires_at.is.null,expires_at.gt.${nowIso}`),
+      overrideScopeFilter
+        ? (supabase as any)
+            .from("role_permission_overrides")
+            .select("role_id, scope_type, scope_id, allow_permissions, deny_permissions")
+            .eq("server_id", activeServerId)
+            .or(overrideScopeFilter)
+        : Promise.resolve({ data: [] as RolePermissionOverride[] }),
+    ]);
+
+    const roleMap = new Map<string, { id: string; color: string; position: number; permissions: string[] }>();
+    const roleById = new Map<string, { id: string; name: string; color: string; position: number; permissions: string[] }>();
     (serverRoles || []).forEach((role) => {
+      const normalizedPermissions = Array.isArray(role.permissions)
+        ? role.permissions.filter((p): p is string => typeof p === "string")
+        : [];
       roleMap.set(role.name.toLowerCase(), {
+        id: role.id,
         color: role.color,
         position: role.position,
-        permissions: Array.isArray(role.permissions) ? role.permissions.filter((p): p is string => typeof p === "string") : [],
+        permissions: normalizedPermissions,
+      });
+      roleById.set(role.id, {
+        id: role.id,
+        name: role.name,
+        color: role.color,
+        position: role.position,
+        permissions: normalizedPermissions,
       });
     });
 
     const profileMap = new Map((profiles || []).map((p) => [p.id, p]));
+    const activeTemporaryRoleGrants = ((temporaryRoleGrantRows || []) as ActiveTemporaryRoleGrant[]).filter((grant) =>
+      !grant.expires_at || new Date(grant.expires_at).getTime() > Date.now(),
+    );
+    const temporaryRoleIdsByUser = new Map<string, Set<string>>();
+    activeTemporaryRoleGrants.forEach((grant) => {
+      const bucket = temporaryRoleIdsByUser.get(grant.user_id) || new Set<string>();
+      bucket.add(grant.role_id);
+      temporaryRoleIdsByUser.set(grant.user_id, bucket);
+    });
+    const activeOverrides = ((overrideRows || []) as Array<{
+      role_id: string;
+      scope_type: "group" | "channel";
+      scope_id: string;
+      allow_permissions: unknown;
+      deny_permissions: unknown;
+    }>).map((override) => ({
+      role_id: override.role_id,
+      scope_type: override.scope_type,
+      scope_id: override.scope_id,
+      allow_permissions: Array.isArray(override.allow_permissions)
+        ? override.allow_permissions.filter((p): p is string => typeof p === "string")
+        : [],
+      deny_permissions: Array.isArray(override.deny_permissions)
+        ? override.deny_permissions.filter((p): p is string => typeof p === "string")
+        : [],
+    }));
     const enriched = memberships
       .map((membership) => {
         const base = profileMap.get(membership.user_id);
@@ -697,6 +871,25 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const roleName = membership.role as string;
         const displayRoleName = roleName === "owner" ? ownerGroupName : roleName;
         const roleMeta = roleMap.get(roleName.toLowerCase());
+        const temporaryRoleIds = temporaryRoleIdsByUser.get(membership.user_id) || new Set<string>();
+        const allRoleIds = new Set<string>();
+        const basePermissions = new Set<string>(roleMeta?.permissions || []);
+        if (roleMeta?.id) allRoleIds.add(roleMeta.id);
+        temporaryRoleIds.forEach((roleId) => {
+          const tempRole = roleById.get(roleId);
+          if (!tempRole) return;
+          allRoleIds.add(roleId);
+          tempRole.permissions.forEach((permission) => basePermissions.add(permission));
+        });
+        const effectivePermissions = resolveEffectivePermissions(
+          Array.from(basePermissions),
+          Array.from(allRoleIds),
+          activeOverrides,
+          {
+            channelId: activeChannelForPermissions?.id || null,
+            groupId: activeGroupIdForPermissions,
+          },
+        );
         return {
           ...(base as Profile),
           server_role: displayRoleName,
@@ -704,7 +897,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           role_position: roleName === "owner"
             ? Number.MAX_SAFE_INTEGER
             : (typeof roleMeta?.position === "number" ? roleMeta.position : null),
-          role_permissions: roleMeta?.permissions || [],
+          role_permissions: effectivePermissions,
         } as Profile;
       })
       .filter((entry: Profile | null): entry is Profile => !!entry);
@@ -717,18 +910,24 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     setMembers(enriched.map(applyEffectivePresence));
-  }, [activeServerId, applyEffectivePresence, servers]);
+  }, [activeServerId, applyEffectivePresence, resolveEffectivePermissions, servers]);
 
   useEffect(() => {
     if (!activeServerId) return;
+    const requestServerId = activeServerId;
+    setChannels([]);
+    setChannelGroups([]);
+    setActiveChannelId(null);
+
     const loadChannels = async () => {
-      const { data } = await supabase.from("channels").select("*").eq("server_id", activeServerId);
+      const { data } = await supabase.from("channels").select("*").eq("server_id", requestServerId);
+      if (activeServerIdRef.current !== requestServerId) return;
       const channelList = (data || []) as Channel[];
       setChannels(channelList);
       setActiveChannelId((prev) => {
         if (prev && channelList.some((c) => c.id === prev)) return prev;
-        const firstText = channelList.find((c) => c.type === "text");
-        return firstText?.id || null;
+        const firstConversationChannel = channelList.find((c) => c.type === "text" || c.type === "forum");
+        return firstConversationChannel?.id || null;
       });
     };
     loadChannels();
@@ -737,9 +936,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { data } = await supabase
         .from("channel_groups")
         .select("*")
-        .eq("server_id", activeServerId)
+        .eq("server_id", requestServerId)
         .order("position", { ascending: true })
         .order("created_at", { ascending: true });
+      if (activeServerIdRef.current !== requestServerId) return;
       setChannelGroups((data || []) as ChannelGroup[]);
     };
     loadChannelGroups();
@@ -776,6 +976,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [activeServerId, loadMembers]);
 
   useEffect(() => {
+    if (!activeServerId) return;
+    void loadMembers();
+  }, [activeServerId, activeChannelId, channels, loadMembers]);
+
+  useEffect(() => {
     if (!activeServerId || !user) {
       setUnreadCountByChannel({});
       setChannelLastReadAtByChannel({});
@@ -803,7 +1008,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     if (!activeServerId || !user) return;
-    const textChannelIds = new Set(channels.filter((c) => c.type === "text").map((c) => c.id));
+    const textChannelIds = new Set(
+      channels
+        .filter((c) => c.type === "text" || c.type === "forum")
+        .map((c) => c.id),
+    );
     if (textChannelIds.size === 0) return;
 
     const unreadRealtime = supabase
@@ -864,13 +1073,15 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Load messages + reactions + realtime
   useEffect(() => {
     if (!activeChannelId) { setMessages([]); setReactions({}); return; }
+    const currentChannelId = activeChannelId;
 
     const loadMessages = async () => {
       const { data } = await supabase
         .from("messages").select("*")
-        .eq("channel_id", activeChannelId)
+        .eq("channel_id", currentChannelId)
         .order("created_at", { ascending: false })
         .limit(300);
+      if (activeChannelIdRef.current !== currentChannelId) return;
       const baseMsgs = (data || []) as Message[];
       const existingIds = new Set(baseMsgs.map((m) => m.id));
       const missingParentIds = Array.from(
@@ -887,6 +1098,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .from("messages")
           .select("*")
           .in("id", missingParentIds);
+        if (activeChannelIdRef.current !== currentChannelId) return;
         const parentMsgs = (parentRows || []) as Message[];
         mergedMsgs = [...baseMsgs, ...parentMsgs];
       }
@@ -894,11 +1106,29 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const msgs = mergedMsgs.sort(
         (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
       );
-      setMessages(msgs);
+      setMessages((prev) => {
+        if (
+          prev.length === msgs.length &&
+          prev.every((m, i) =>
+            m.id === msgs[i].id &&
+            m.content === msgs[i].content &&
+            m.edited_at === msgs[i].edited_at &&
+            m.pinned_at === msgs[i].pinned_at &&
+            m.reply_to === msgs[i].reply_to &&
+            m.attachment_url === msgs[i].attachment_url &&
+            m.attachment_name === msgs[i].attachment_name &&
+            m.attachment_type === msgs[i].attachment_type,
+          )
+        ) {
+          return prev;
+        }
+        return msgs;
+      });
 
       if (msgs.length > 0) {
         const msgIds = msgs.map(m => m.id);
         const { data: rxns } = await supabase.from("reactions").select("*").in("message_id", msgIds);
+        if (activeChannelIdRef.current !== currentChannelId) return;
         const grouped: Record<string, Reaction[]> = {};
         (rxns || []).forEach((r) => {
           if (!grouped[r.message_id]) grouped[r.message_id] = [];
@@ -914,9 +1144,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         void loadMessages();
       }
     };
-    const refreshId = window.setInterval(() => {
-      void loadMessages();
-    }, 5000);
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     const channel = supabase
@@ -970,7 +1197,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .subscribe();
 
     return () => {
-      window.clearInterval(refreshId);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       supabase.removeChannel(channel);
       supabase.removeChannel(rxnChannel);
@@ -1079,7 +1305,15 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   }, []);
 
-  const setActiveServer = useCallback((id: string) => { setActiveServerId(id); }, []);
+  const setActiveServer = useCallback((id: string) => {
+    setActiveServerId((prev) => {
+      if (prev === id) return prev;
+      setActiveChannelId(null);
+      setChannels([]);
+      setChannelGroups([]);
+      return id;
+    });
+  }, []);
 
   const processScheduledMessages = useCallback(async () => {
     if (!user) return;

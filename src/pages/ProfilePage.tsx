@@ -385,7 +385,7 @@ const ProfilePage = () => {
 
   return (
     <div className="min-h-screen bg-chat-area text-foreground">
-      <div className="max-w-4xl mx-auto p-6">
+      <div className="max-w-4xl mx-auto p-4 sm:p-6">
         <button onClick={() => navigate(-1)} className="mb-4 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
           <ArrowLeft className="w-4 h-4" />
           Back
@@ -410,29 +410,29 @@ const ProfilePage = () => {
                 </DropdownMenu>
               </div>
             )}
-            <div className="h-44 bg-secondary relative z-0">
+            <div className="h-32 sm:h-44 bg-secondary relative z-0">
               {profile.banner_url && <img src={profile.banner_url} alt="Profile banner" className="w-full h-full object-cover" />}
               {isOwn && (
-                <label className="absolute top-3 right-3 px-3 py-1.5 rounded-md bg-black/60 text-white text-xs cursor-pointer">
+                <label className="absolute top-3 right-3 px-3 py-1.5 rounded-md bg-black/60 text-white text-[11px] sm:text-xs cursor-pointer">
                   {uploading ? "Uploading..." : "Change Banner"}
                   <input type="file" accept="image/*" className="hidden" onChange={(e) => void handleFileChange(e, "banner")} disabled={uploading} />
                 </label>
               )}
             </div>
 
-            <div className="absolute left-6 right-6 -bottom-10 z-20 flex items-end justify-between pointer-events-none">
-              <div className="flex items-end gap-4 pointer-events-auto">
-                <div className="w-20 h-20 rounded-full border-4 border-card overflow-hidden bg-secondary flex items-center justify-center text-xl font-bold shadow-md">
+            <div className="absolute left-4 right-4 sm:left-6 sm:right-6 -bottom-14 sm:-bottom-10 z-20 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between pointer-events-none">
+              <div className="flex items-end gap-3 sm:gap-4 pointer-events-auto min-w-0">
+                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full border-4 border-card overflow-hidden bg-secondary flex items-center justify-center text-xl font-bold shadow-md shrink-0">
                   {profile.avatar_url ? <img src={profile.avatar_url} alt={profile.display_name} className="w-full h-full object-cover" /> : initials}
                 </div>
-                <div className="pb-1">
-                  <h1 className="text-2xl font-bold text-foreground drop-shadow-sm">{profile.display_name}</h1>
-                  <p className="text-muted-foreground">@{profile.username}</p>
+                <div className="pb-0.5 min-w-0">
+                  <h1 className="text-xl sm:text-2xl font-bold text-foreground drop-shadow-sm truncate">{profile.display_name}</h1>
+                  <p className="text-sm text-muted-foreground truncate">@{profile.username}</p>
                 </div>
               </div>
 
               {isOwn && (
-                <label className="px-3 py-2 rounded-md bg-secondary text-secondary-foreground text-xs cursor-pointer pointer-events-auto">
+                <label className="w-fit px-3 py-2 rounded-md bg-secondary text-secondary-foreground text-xs cursor-pointer pointer-events-auto">
                   {uploading ? "Uploading..." : "Change Avatar"}
                   <input type="file" accept="image/*" className="hidden" onChange={(e) => void handleFileChange(e, "avatar")} disabled={uploading} />
                 </label>
@@ -440,7 +440,7 @@ const ProfilePage = () => {
             </div>
           </div>
 
-          <div className="px-6 pb-6 pt-14">
+          <div className="px-4 sm:px-6 pb-6 pt-20 sm:pt-14">
             {!isOwn && (
               <div className="mb-5 flex flex-wrap items-center gap-2">
                 <button

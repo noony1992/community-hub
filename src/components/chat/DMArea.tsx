@@ -1,7 +1,7 @@
 import { Fragment, useState, useRef, useEffect, useMemo } from "react";
 import { useDMContext } from "@/context/DMContext";
 import { useAuth } from "@/context/AuthContext";
-import { AtSign, PlusCircle, Gift, Smile, SendHorizonal } from "lucide-react";
+import { AtSign, PlusCircle, Gift, Smile, SendHorizonal, PanelLeft, Menu } from "lucide-react";
 import { format, isSameDay, isToday, isYesterday } from "date-fns";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -17,7 +17,13 @@ interface FriendItem {
   updated_at?: string | null;
 }
 
-const DMArea = () => {
+type DMAreaProps = {
+  isMobile?: boolean;
+  onOpenServers?: () => void;
+  onOpenConversations?: () => void;
+};
+
+const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMAreaProps) => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { activeConversationId, conversations, dmMessages, sendDM, startConversation, isFriendsView } = useDMContext();
@@ -117,9 +123,27 @@ const DMArea = () => {
   return (
     <div className="flex flex-col flex-1 min-w-0 bg-chat-area">
       {/* Header */}
-      <div className="h-12 px-4 flex items-center border-b border-border/50 shrink-0">
+      <div className="h-12 px-3 sm:px-4 flex items-center gap-2 border-b border-border/50 shrink-0">
+        {isMobile && (
+          <>
+            <button
+              onClick={onOpenServers}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Open navigation"
+            >
+              <PanelLeft className="w-4 h-4" />
+            </button>
+            <button
+              onClick={onOpenConversations}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Open conversations"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
+          </>
+        )}
         <div className="flex items-center min-w-0">
-        <AtSign className="w-5 h-5 text-muted-foreground mr-2" />
+          <AtSign className="w-5 h-5 text-muted-foreground mr-2" />
           <span className="font-semibold text-foreground truncate">
             {isFriendsView ? "Friends" : (participant?.display_name || "Direct Message")}
           </span>

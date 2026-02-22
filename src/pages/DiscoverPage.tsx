@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, Compass, Users } from "lucide-react";
+import { Search, Compass, Users, PanelLeft } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/AuthContext";
 import { useChatContext } from "@/context/ChatContext";
 import ServerSidebar from "@/components/chat/ServerSidebar";
 import BanAppealDialog from "@/components/chat/BanAppealDialog";
+import BottomLeftDock from "@/components/chat/BottomLeftDock";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 
 interface DiscoverServer {
   id: string;
@@ -25,6 +28,8 @@ const DiscoverPage = () => {
   const [joiningId, setJoiningId] = useState<string | null>(null);
   const [banAppealServerId, setBanAppealServerId] = useState<string | null>(null);
   const [banAppealOpen, setBanAppealOpen] = useState(false);
+  const isMobile = useIsMobile();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const joinedIds = useMemo(() => new Set(joinedServers.map((s) => s.id)), [joinedServers]);
 
@@ -85,16 +90,27 @@ const DiscoverPage = () => {
   };
 
   return (
-    <div className="flex h-screen w-full overflow-hidden">
-      <ServerSidebar />
-      <div className="flex-1 min-w-0 bg-chat-area p-6 overflow-y-auto">
+    <div className="flex h-[100dvh] w-full overflow-hidden">
+      {!isMobile && <ServerSidebar />}
+      <div className="flex-1 min-w-0 bg-chat-area p-4 sm:p-6 overflow-y-auto">
         <div className="max-w-5xl mx-auto">
-          <div className="mb-6">
-            <h1 className="text-2xl font-semibold text-foreground flex items-center gap-2">
-              <Compass className="w-6 h-6 text-primary" />
+          <div className="mb-6 flex items-start justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-semibold text-foreground flex items-center gap-2">
+                <Compass className="w-6 h-6 text-primary" />
               Discover Servers
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">Browse and join public community servers.</p>
+              </h1>
+              <p className="text-sm text-muted-foreground mt-1">Browse and join public community servers.</p>
+            </div>
+            {isMobile && (
+              <button
+                onClick={() => setMobileNavOpen(true)}
+                className="shrink-0 rounded-md border border-border bg-secondary px-2.5 py-2 text-secondary-foreground"
+                title="Open navigation"
+              >
+                <PanelLeft className="h-4 w-4" />
+              </button>
+            )}
           </div>
 
           <div className="relative mb-6">
@@ -145,7 +161,14 @@ const DiscoverPage = () => {
                     </div>
 
                     <button
-                      onClick={() => (joined ? (setActiveServer(server.id), navigate("/")) : handleJoin(server.id))}
+                      onClick={() => {
+                        if (joined) {
+                          setActiveServer(server.id);
+                          navigate("/");
+                          return;
+                        }
+                        void handleJoin(server.id);
+                      }}
                       disabled={joiningId === server.id}
                       className="w-full py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
                     >
@@ -163,6 +186,18 @@ const DiscoverPage = () => {
         onOpenChange={setBanAppealOpen}
         serverId={banAppealServerId}
       />
+      {!isMobile && (
+        <div className="fixed bottom-0 left-[72px] z-30 w-60">
+          <BottomLeftDock expandIntoServerRail />
+        </div>
+      )}
+      {isMobile && (
+        <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+          <SheetContent side="left" className="w-[88vw] max-w-sm p-0">
+            <ServerSidebar mode="sheet" onNavigate={() => setMobileNavOpen(false)} />
+          </SheetContent>
+        </Sheet>
+      )}
     </div>
   );
 };

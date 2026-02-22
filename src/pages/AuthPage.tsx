@@ -32,8 +32,8 @@ const AuthPage = () => {
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-background">
-      <div className="w-full max-w-md p-8 rounded-lg bg-card shadow-xl">
+    <div className="flex items-center justify-center min-h-screen bg-background p-4">
+      <div className="w-full max-w-md p-6 sm:p-8 rounded-lg bg-card shadow-xl">
         <div className="flex flex-col items-center mb-8">
           <div className="w-12 h-12 rounded-full bg-primary flex items-center justify-center mb-3">
             <MessageSquare className="w-6 h-6 text-primary-foreground" />

@@ -5,8 +5,14 @@ import { useAuth } from "@/context/AuthContext";
 import { Search, Users, X } from "lucide-react";
 import StatusIndicator from "./StatusIndicator";
 import { getEffectiveStatus } from "@/lib/presence";
+import BottomLeftDock from "./BottomLeftDock";
 
-const DMSidebar = () => {
+type DMSidebarProps = {
+  embedded?: boolean;
+  onNavigate?: () => void;
+};
+
+const DMSidebar = ({ embedded = false, onNavigate }: DMSidebarProps) => {
   const { user } = useAuth();
   const {
     conversations,
@@ -42,10 +48,11 @@ const DMSidebar = () => {
     setIsFriendsView(false);
     setSearchQuery("");
     setSearchResults([]);
+    onNavigate?.();
   };
 
   return (
-    <div className="flex flex-col w-60 bg-channel-bar shrink-0">
+    <div className={`flex flex-col bg-channel-bar shrink-0 ${embedded ? "w-full h-full" : "w-60"}`}>
       <div className="h-12 px-4 flex items-center border-b border-border/50">
         <span className="font-semibold text-foreground">Direct Messages</span>
       </div>
@@ -129,6 +136,7 @@ const DMSidebar = () => {
               onClick={() => {
                 setIsFriendsView(false);
                 setActiveConversation(conv.id);
+                onNavigate?.();
               }}
               className={`flex items-center gap-2.5 w-full px-2 py-1.5 rounded-md text-sm transition-colors ${
                 isActive
@@ -150,6 +158,8 @@ const DMSidebar = () => {
           );
         })}
       </div>
+
+      <BottomLeftDock embedded={embedded} expandIntoServerRail={!embedded} />
     </div>
   );
 };

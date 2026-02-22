@@ -1,6 +1,7 @@
 const ANNOUNCEMENT_PREFIX = "[[ANNOUNCEMENT]]";
 const QUESTION_PREFIX = "[[QUESTION]]";
 const POLL_PREFIX = "[[POLL]]";
+const FORUM_TOPIC_PREFIX = "[[FORUM_TOPIC]]";
 
 export type PollDefinition = {
   question: string;
@@ -9,11 +10,17 @@ export type PollDefinition = {
   expiresAt?: string | null;
 };
 
+export type ForumTopicDefinition = {
+  title: string;
+  body: string;
+};
+
 export type ParsedMessage =
   | { kind: "plain"; text: string }
   | { kind: "announcement"; text: string }
   | { kind: "question"; text: string }
-  | { kind: "poll"; poll: PollDefinition };
+  | { kind: "poll"; poll: PollDefinition }
+  | { kind: "forum_topic"; topic: ForumTopicDefinition };
 
 const safeJsonParse = (value: string) => {
   try {
@@ -26,6 +33,7 @@ const safeJsonParse = (value: string) => {
 export const encodeAnnouncement = (text: string) => `${ANNOUNCEMENT_PREFIX}${text}`;
 export const encodeQuestion = (text: string) => `${QUESTION_PREFIX}${text}`;
 export const encodePoll = (poll: PollDefinition) => `${POLL_PREFIX}${JSON.stringify(poll)}`;
+export const encodeForumTopic = (topic: ForumTopicDefinition) => `${FORUM_TOPIC_PREFIX}${JSON.stringify(topic)}`;
 
 export const parseMessageFeatures = (content: string): ParsedMessage => {
   if (content.startsWith(ANNOUNCEMENT_PREFIX)) {
@@ -58,6 +66,28 @@ export const parseMessageFeatures = (content: string): ParsedMessage => {
       }
     }
   }
+  if (content.startsWith(FORUM_TOPIC_PREFIX)) {
+    const raw = content.slice(FORUM_TOPIC_PREFIX.length).trim();
+    const parsed = safeJsonParse(raw);
+    if (
+      parsed
+      && typeof parsed === "object"
+      && typeof (parsed as ForumTopicDefinition).title === "string"
+      && typeof (parsed as ForumTopicDefinition).body === "string"
+    ) {
+      const topic = parsed as ForumTopicDefinition;
+      const title = topic.title.trim();
+      const body = topic.body.trim();
+      if (title) {
+        return {
+          kind: "forum_topic",
+          topic: {
+            title,
+            body: body || title,
+          },
+        };
+      }
+    }
+  }
   return { kind: "plain", text: content };
 };
-

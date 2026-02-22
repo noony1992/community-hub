@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowUp, Hash, Plus, Search, Settings, Shield, Trash2, Users } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Hash, MessageSquare, Plus, Search, Settings, Shield, Trash2, Users, Volume2, PanelLeft } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useChatContext } from "@/context/ChatContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -16,6 +16,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 
 interface MemberWithRole {
   id: string;
@@ -31,6 +33,40 @@ interface ServerRole {
   color: string;
   position: number;
   permissions: string[];
+}
+
+interface TemporaryRoleGrantItem {
+  id: string;
+  user_id: string;
+  role_id: string;
+  granted_by: string | null;
+  created_at: string;
+  expires_at: string | null;
+}
+
+interface RolePermissionOverrideItem {
+  id: string;
+  role_id: string;
+  scope_type: "group" | "channel";
+  scope_id: string;
+  allow_permissions: string[];
+  deny_permissions: string[];
+  created_at: string;
+}
+
+interface RoleTemplateItem {
+  id: string;
+  name: string;
+  definition: {
+    roles: Array<{
+      name: string;
+      color: string;
+      position: number;
+      permissions: string[];
+    }>;
+  };
+  created_at: string;
+  updated_at: string;
 }
 
 interface BanListItem {
@@ -265,11 +301,34 @@ const ServerSettingsPage = () => {
   const [tab, setTab] = useState<"info" | "channels" | "roles" | "moderation">("info");
   const [serverName, setServerName] = useState("");
   const [newChannelName, setNewChannelName] = useState("");
-  const [newChannelType, setNewChannelType] = useState<"text" | "voice">("text");
+  const [newChannelType, setNewChannelType] = useState<"text" | "forum" | "voice">("text");
   const [newGroupName, setNewGroupName] = useState("");
   const [roles, setRoles] = useState<ServerRole[]>([]);
   const [rolesLoaded, setRolesLoaded] = useState(false);
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
+  const [rolePermissionOverrides, setRolePermissionOverrides] = useState<RolePermissionOverrideItem[]>([]);
+  const [loadingRoleOverrides, setLoadingRoleOverrides] = useState(false);
+  const [overrideScopeType, setOverrideScopeType] = useState<"channel" | "group">("channel");
+  const [overrideScopeId, setOverrideScopeId] = useState<string>("");
+  const [overridePermissionKey, setOverridePermissionKey] = useState<string>(ROLE_PERMISSION_OPTIONS[0].key);
+  const [overrideMode, setOverrideMode] = useState<"allow" | "deny" | "clear">("allow");
+  const [savingRoleOverride, setSavingRoleOverride] = useState(false);
+  const [deletingRoleOverrideId, setDeletingRoleOverrideId] = useState<string | null>(null);
+  const [temporaryRoleGrants, setTemporaryRoleGrants] = useState<TemporaryRoleGrantItem[]>([]);
+  const [loadingTemporaryRoleGrants, setLoadingTemporaryRoleGrants] = useState(false);
+  const [grantMemberId, setGrantMemberId] = useState<string>("");
+  const [grantRoleId, setGrantRoleId] = useState<string>("");
+  const [grantExpiresAt, setGrantExpiresAt] = useState<string>("");
+  const [savingTemporaryRoleGrant, setSavingTemporaryRoleGrant] = useState(false);
+  const [deletingTemporaryRoleGrantId, setDeletingTemporaryRoleGrantId] = useState<string | null>(null);
+  const [roleTemplates, setRoleTemplates] = useState<RoleTemplateItem[]>([]);
+  const [loadingRoleTemplates, setLoadingRoleTemplates] = useState(false);
+  const [templateName, setTemplateName] = useState("");
+  const [savingRoleTemplate, setSavingRoleTemplate] = useState(false);
+  const [deletingRoleTemplateId, setDeletingRoleTemplateId] = useState<string | null>(null);
+  const [applyingRoleTemplateId, setApplyingRoleTemplateId] = useState<string | null>(null);
+  const [templateImportJson, setTemplateImportJson] = useState("");
+  const [exportedTemplateJson, setExportedTemplateJson] = useState("");
   const [newRoleName, setNewRoleName] = useState("");
   const [newRoleColor, setNewRoleColor] = useState("#9CA3AF");
   const [ownerGroupName, setOwnerGroupName] = useState("Owner");
@@ -345,6 +404,8 @@ const ServerSettingsPage = () => {
   const [newOnboardingStepDescription, setNewOnboardingStepDescription] = useState("");
   const [newOnboardingStepChannelId, setNewOnboardingStepChannelId] = useState("");
   const [newOnboardingStepRequired, setNewOnboardingStepRequired] = useState(true);
+  const isMobile = useIsMobile();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const server = useMemo(() => servers.find((s) => s.id === serverId), [servers, serverId]);
   const isOwner = !!user && !!server && server.owner_id === user.id;
@@ -453,6 +514,109 @@ const ServerSettingsPage = () => {
     setRolesLoaded(true);
   }, [serverId]);
 
+  const loadRolePermissionOverrides = useCallback(async () => {
+    if (!serverId || !isOwner) return;
+    setLoadingRoleOverrides(true);
+    const { data, error } = await (supabase as any)
+      .from("role_permission_overrides")
+      .select("id, role_id, scope_type, scope_id, allow_permissions, deny_permissions, created_at")
+      .eq("server_id", serverId)
+      .order("created_at", { ascending: false });
+    setLoadingRoleOverrides(false);
+    if (error) {
+      alert(`Failed to load role overrides: ${error.message}`);
+      return;
+    }
+    const mapped = (data || []).map((row: {
+      id: string;
+      role_id: string;
+      scope_type: "group" | "channel";
+      scope_id: string;
+      allow_permissions: unknown;
+      deny_permissions: unknown;
+      created_at: string;
+    }) => ({
+      id: row.id,
+      role_id: row.role_id,
+      scope_type: row.scope_type,
+      scope_id: row.scope_id,
+      allow_permissions: Array.isArray(row.allow_permissions)
+        ? row.allow_permissions.filter((p: unknown): p is string => typeof p === "string")
+        : [],
+      deny_permissions: Array.isArray(row.deny_permissions)
+        ? row.deny_permissions.filter((p: unknown): p is string => typeof p === "string")
+        : [],
+      created_at: row.created_at,
+    })) as RolePermissionOverrideItem[];
+    setRolePermissionOverrides(mapped);
+  }, [isOwner, serverId]);
+
+  const loadTemporaryRoleGrants = useCallback(async () => {
+    if (!serverId || !isOwner) return;
+    setLoadingTemporaryRoleGrants(true);
+    const { data, error } = await (supabase as any)
+      .from("server_temporary_role_grants")
+      .select("id, user_id, role_id, granted_by, created_at, expires_at")
+      .eq("server_id", serverId)
+      .order("created_at", { ascending: false });
+    setLoadingTemporaryRoleGrants(false);
+    if (error) {
+      alert(`Failed to load temporary role grants: ${error.message}`);
+      return;
+    }
+    setTemporaryRoleGrants((data || []) as TemporaryRoleGrantItem[]);
+  }, [isOwner, serverId]);
+
+  const loadRoleTemplates = useCallback(async () => {
+    if (!serverId || !isOwner) return;
+    setLoadingRoleTemplates(true);
+    const { data, error } = await (supabase as any)
+      .from("server_role_templates")
+      .select("id, name, definition, created_at, updated_at")
+      .eq("server_id", serverId)
+      .order("updated_at", { ascending: false });
+    setLoadingRoleTemplates(false);
+    if (error) {
+      alert(`Failed to load role templates: ${error.message}`);
+      return;
+    }
+    const mapped = (data || []).map((row: {
+      id: string;
+      name: string;
+      definition: unknown;
+      created_at: string;
+      updated_at: string;
+    }) => {
+      const rawRoles = (row.definition as { roles?: unknown })?.roles;
+      const parsedRoles = Array.isArray(rawRoles)
+        ? rawRoles
+            .map((entry) => {
+              if (!entry || typeof entry !== "object") return null;
+              const role = entry as Record<string, unknown>;
+              const roleName = typeof role.name === "string" ? role.name.trim() : "";
+              if (!roleName) return null;
+              return {
+                name: roleName,
+                color: typeof role.color === "string" ? role.color : "#9CA3AF",
+                position: typeof role.position === "number" ? role.position : 0,
+                permissions: Array.isArray(role.permissions)
+                  ? role.permissions.filter((permission): permission is string => typeof permission === "string")
+                  : [],
+              };
+            })
+            .filter((entry): entry is { name: string; color: string; position: number; permissions: string[] } => !!entry)
+        : [];
+      return {
+        id: row.id,
+        name: row.name,
+        definition: { roles: parsedRoles },
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+      } satisfies RoleTemplateItem;
+    });
+    setRoleTemplates(mapped);
+  }, [isOwner, serverId]);
+
   useEffect(() => {
     if (!serverId) return;
 
@@ -492,13 +656,33 @@ const ServerSettingsPage = () => {
     };
 
     void loadRoles();
+    void loadRolePermissionOverrides();
+    void loadTemporaryRoleGrants();
+    void loadRoleTemplates();
     loadMembers();
-  }, [serverId, loadRoles]);
+  }, [serverId, loadRolePermissionOverrides, loadRoleTemplates, loadRoles, loadTemporaryRoleGrants]);
 
   useEffect(() => {
     if (tab !== "info" || !isOwner) return;
     void loadOnboardingBuilder();
   }, [tab, isOwner, loadOnboardingBuilder]);
+
+  useEffect(() => {
+    if (!grantRoleId && roles.length > 0) {
+      setGrantRoleId(roles[0].id);
+    }
+  }, [grantRoleId, roles]);
+
+  useEffect(() => {
+    const scopeOptions = overrideScopeType === "channel" ? channels : channelGroups;
+    if (scopeOptions.length === 0) {
+      if (overrideScopeId) setOverrideScopeId("");
+      return;
+    }
+    if (!scopeOptions.some((scope) => scope.id === overrideScopeId)) {
+      setOverrideScopeId(scopeOptions[0].id);
+    }
+  }, [channels, channelGroups, overrideScopeId, overrideScopeType]);
 
   const handleSaveInfo = async () => {
     const cleanName = serverName.trim();
@@ -885,6 +1069,338 @@ const ServerSettingsPage = () => {
       alert(`Failed to reorder roles: ${failed.error.message}`);
       await loadRoles();
     }
+  };
+
+  const handleApplyRoleOverride = async () => {
+    if (!serverId || !user || !selectedRole || !overrideScopeId || savingRoleOverride) return;
+    setSavingRoleOverride(true);
+    const existingOverride = rolePermissionOverrides.find(
+      (override) =>
+        override.role_id === selectedRole.id &&
+        override.scope_type === overrideScopeType &&
+        override.scope_id === overrideScopeId,
+    );
+
+    const allowPermissions = new Set(existingOverride?.allow_permissions || []);
+    const denyPermissions = new Set(existingOverride?.deny_permissions || []);
+
+    if (overrideMode === "allow") {
+      denyPermissions.delete(overridePermissionKey);
+      allowPermissions.add(overridePermissionKey);
+    } else if (overrideMode === "deny") {
+      allowPermissions.delete(overridePermissionKey);
+      denyPermissions.add(overridePermissionKey);
+    } else {
+      allowPermissions.delete(overridePermissionKey);
+      denyPermissions.delete(overridePermissionKey);
+    }
+
+    if (allowPermissions.size === 0 && denyPermissions.size === 0) {
+      if (existingOverride) {
+        const { error } = await (supabase as any)
+          .from("role_permission_overrides")
+          .delete()
+          .eq("id", existingOverride.id)
+          .eq("server_id", serverId);
+        setSavingRoleOverride(false);
+        if (error) {
+          alert(`Failed to clear override: ${error.message}`);
+          return;
+        }
+      } else {
+        setSavingRoleOverride(false);
+      }
+      await loadRolePermissionOverrides();
+      return;
+    }
+
+    const payload = {
+      server_id: serverId,
+      role_id: selectedRole.id,
+      scope_type: overrideScopeType,
+      scope_id: overrideScopeId,
+      allow_permissions: Array.from(allowPermissions),
+      deny_permissions: Array.from(denyPermissions),
+      created_by: user.id,
+    };
+
+    const { error } = await (supabase as any)
+      .from("role_permission_overrides")
+      .upsert(payload, { onConflict: "role_id,scope_type,scope_id" });
+    setSavingRoleOverride(false);
+    if (error) {
+      alert(`Failed to save override: ${error.message}`);
+      return;
+    }
+    await loadRolePermissionOverrides();
+  };
+
+  const handleDeleteRoleOverride = async (overrideId: string) => {
+    if (!serverId || deletingRoleOverrideId) return;
+    setDeletingRoleOverrideId(overrideId);
+    const { error } = await (supabase as any)
+      .from("role_permission_overrides")
+      .delete()
+      .eq("id", overrideId)
+      .eq("server_id", serverId);
+    setDeletingRoleOverrideId(null);
+    if (error) {
+      alert(`Failed to delete override: ${error.message}`);
+      return;
+    }
+    await loadRolePermissionOverrides();
+  };
+
+  const handleGrantTemporaryRole = async () => {
+    if (!serverId || !user || !grantMemberId || !grantRoleId || savingTemporaryRoleGrant) return;
+    const expiresAtIso = grantExpiresAt
+      ? new Date(`${grantExpiresAt}:00`).toISOString()
+      : null;
+    if (!expiresAtIso) {
+      alert("Expiry is required for temporary grants.");
+      return;
+    }
+    setSavingTemporaryRoleGrant(true);
+    const { error } = await (supabase as any)
+      .from("server_temporary_role_grants")
+      .upsert(
+        {
+          server_id: serverId,
+          user_id: grantMemberId,
+          role_id: grantRoleId,
+          granted_by: user.id,
+          expires_at: expiresAtIso,
+        },
+        { onConflict: "server_id,user_id,role_id" },
+      );
+    setSavingTemporaryRoleGrant(false);
+    if (error) {
+      alert(`Failed to create temporary grant: ${error.message}`);
+      return;
+    }
+    setGrantMemberId("");
+    setGrantRoleId("");
+    setGrantExpiresAt("");
+    await loadTemporaryRoleGrants();
+  };
+
+  const handleRevokeTemporaryRole = async (grantId: string) => {
+    if (!serverId || deletingTemporaryRoleGrantId) return;
+    setDeletingTemporaryRoleGrantId(grantId);
+    const { error } = await (supabase as any)
+      .from("server_temporary_role_grants")
+      .delete()
+      .eq("id", grantId)
+      .eq("server_id", serverId);
+    setDeletingTemporaryRoleGrantId(null);
+    if (error) {
+      alert(`Failed to revoke temporary grant: ${error.message}`);
+      return;
+    }
+    await loadTemporaryRoleGrants();
+  };
+
+  const handleSaveRoleTemplate = async () => {
+    if (!serverId || !user || savingRoleTemplate) return;
+    const fallbackName = `Template ${new Date().toLocaleString()}`;
+    const cleanName = (templateName.trim() || fallbackName).slice(0, 80);
+    const definition = {
+      roles: [...roles]
+        .sort((a, b) => b.position - a.position)
+        .map((role) => ({
+          name: role.name,
+          color: role.color,
+          position: role.position,
+          permissions: [...role.permissions],
+        })),
+    };
+
+    setSavingRoleTemplate(true);
+    const existingTemplate = roleTemplates.find((template) => template.name.toLowerCase() === cleanName.toLowerCase()) || null;
+    if (existingTemplate) {
+      const { error } = await (supabase as any)
+        .from("server_role_templates")
+        .update({
+          definition,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existingTemplate.id)
+        .eq("server_id", serverId);
+      setSavingRoleTemplate(false);
+      if (error) {
+        alert(`Failed to update template: ${error.message}`);
+        return;
+      }
+    } else {
+      const { error } = await (supabase as any)
+        .from("server_role_templates")
+        .insert({
+          server_id: serverId,
+          name: cleanName,
+          definition,
+          created_by: user.id,
+        });
+      setSavingRoleTemplate(false);
+      if (error) {
+        alert(`Failed to save template: ${error.message}`);
+        return;
+      }
+    }
+
+    setTemplateName("");
+    await loadRoleTemplates();
+  };
+
+  const handleDeleteRoleTemplate = async (templateId: string) => {
+    if (!serverId || deletingRoleTemplateId) return;
+    setDeletingRoleTemplateId(templateId);
+    const { error } = await (supabase as any)
+      .from("server_role_templates")
+      .delete()
+      .eq("id", templateId)
+      .eq("server_id", serverId);
+    setDeletingRoleTemplateId(null);
+    if (error) {
+      alert(`Failed to delete template: ${error.message}`);
+      return;
+    }
+    await loadRoleTemplates();
+  };
+
+  const handleApplyRoleTemplate = async (template: RoleTemplateItem) => {
+    if (!serverId || applyingRoleTemplateId) return;
+    const templateRoles = template.definition.roles || [];
+    if (templateRoles.length === 0) {
+      alert("Template has no roles to apply.");
+      return;
+    }
+
+    setApplyingRoleTemplateId(template.id);
+    const existingByName = new Map(roles.map((role) => [role.name.toLowerCase(), role]));
+    let failedMessage: string | null = null;
+
+    for (const role of templateRoles) {
+      const existing = existingByName.get(role.name.toLowerCase());
+      if (existing) {
+        const { error } = await supabase
+          .from("server_roles")
+          .update({
+            color: role.color,
+            position: role.position,
+            permissions: role.permissions,
+          })
+          .eq("id", existing.id)
+          .eq("server_id", serverId);
+        if (error) {
+          failedMessage = `Failed to update role "${role.name}": ${error.message}`;
+          break;
+        }
+      } else {
+        const { error } = await supabase
+          .from("server_roles")
+          .insert({
+            server_id: serverId,
+            name: role.name,
+            color: role.color,
+            position: role.position,
+            permissions: role.permissions,
+          });
+        if (error) {
+          failedMessage = `Failed to create role "${role.name}": ${error.message}`;
+          break;
+        }
+      }
+    }
+
+    setApplyingRoleTemplateId(null);
+    if (failedMessage) {
+      alert(failedMessage);
+      return;
+    }
+
+    await loadRoles();
+  };
+
+  const handleExportRoleTemplate = async (template: RoleTemplateItem) => {
+    const payload = JSON.stringify(
+      {
+        name: template.name,
+        roles: template.definition.roles,
+      },
+      null,
+      2,
+    );
+    setExportedTemplateJson(payload);
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(payload);
+      } catch {
+        // Ignore clipboard errors and keep payload in the export textarea.
+      }
+    }
+  };
+
+  const handleImportRoleTemplate = async () => {
+    if (!serverId || !user || savingRoleTemplate) return;
+    const raw = templateImportJson.trim();
+    if (!raw) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      alert("Invalid JSON.");
+      return;
+    }
+
+    const parsedObject = parsed as {
+      name?: unknown;
+      roles?: unknown;
+    };
+    const parsedRoles = Array.isArray(parsedObject.roles)
+      ? parsedObject.roles
+          .map((entry) => {
+            if (!entry || typeof entry !== "object") return null;
+            const row = entry as Record<string, unknown>;
+            const roleName = typeof row.name === "string" ? row.name.trim() : "";
+            if (!roleName) return null;
+            return {
+              name: roleName,
+              color: typeof row.color === "string" ? row.color : "#9CA3AF",
+              position: typeof row.position === "number" ? row.position : 0,
+              permissions: Array.isArray(row.permissions)
+                ? row.permissions.filter((permission): permission is string => typeof permission === "string")
+                : [],
+            };
+          })
+          .filter((entry): entry is { name: string; color: string; position: number; permissions: string[] } => !!entry)
+      : [];
+
+    if (parsedRoles.length === 0) {
+      alert("Template JSON must include a non-empty roles array.");
+      return;
+    }
+
+    const importedTemplateName = typeof parsedObject.name === "string" && parsedObject.name.trim()
+      ? parsedObject.name.trim().slice(0, 80)
+      : `Imported ${new Date().toLocaleString()}`;
+
+    setSavingRoleTemplate(true);
+    const { error } = await (supabase as any)
+      .from("server_role_templates")
+      .insert({
+        server_id: serverId,
+        name: importedTemplateName,
+        definition: { roles: parsedRoles },
+        created_by: user.id,
+      });
+    setSavingRoleTemplate(false);
+    if (error) {
+      alert(`Failed to import template: ${error.message}`);
+      return;
+    }
+
+    setTemplateImportJson("");
+    await loadRoleTemplates();
   };
 
   const handleSaveOwnerGroupName = async () => {
@@ -1385,6 +1901,11 @@ const ServerSettingsPage = () => {
     ]),
   );
   const selectedRole = roles.find((role) => role.id === selectedRoleId) || null;
+  const selectedRoleOverrides = selectedRole
+    ? rolePermissionOverrides.filter((override) => override.role_id === selectedRole.id)
+    : [];
+  const overrideScopeOptions = overrideScopeType === "channel" ? channels : channelGroups;
+  const roleById = useMemo(() => new Map(roles.map((role) => [role.id, role])), [roles]);
   const serverOwnerId = server?.owner_id || null;
   const filteredMembers = members.filter((member) => {
     const q = memberSearch.trim().toLowerCase();
@@ -1396,6 +1917,8 @@ const ServerSettingsPage = () => {
     );
   });
   const memberById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
+  const nonOwnerMembers = members.filter((member) => member.id !== serverOwnerId);
+  const activeTemporaryRoleGrants = temporaryRoleGrants.filter((grant) => !grant.expires_at || new Date(grant.expires_at).getTime() > Date.now());
   const modAssignableMembers = useMemo(() => {
     const roleByName = new Map(roles.map((r) => [r.name.toLowerCase(), r]));
     return members.filter((member) => {
@@ -1461,7 +1984,7 @@ const ServerSettingsPage = () => {
 
   if (!serverId) {
     return (
-      <div className="h-screen flex items-center justify-center bg-chat-area text-muted-foreground">
+      <div className="min-h-[100dvh] flex items-center justify-center bg-chat-area text-muted-foreground">
         Invalid server.
       </div>
     );
@@ -1469,7 +1992,7 @@ const ServerSettingsPage = () => {
 
   if (!server) {
     return (
-      <div className="h-screen flex items-center justify-center bg-chat-area text-muted-foreground">
+      <div className="min-h-[100dvh] flex items-center justify-center bg-chat-area text-muted-foreground">
         Loading server settings...
       </div>
     );
@@ -1477,7 +2000,7 @@ const ServerSettingsPage = () => {
 
   if (!isOwner && rolesLoaded && !hasManageChannelsPermission && !hasModerationPermission) {
     return (
-      <div className="h-screen bg-chat-area text-foreground flex flex-col items-center justify-center gap-3 px-4">
+      <div className="min-h-[100dvh] bg-chat-area text-foreground flex flex-col items-center justify-center gap-3 px-4">
         <p className="text-lg font-semibold">You do not have access to this page.</p>
         <button
           onClick={() => navigate("/")}
@@ -1490,36 +2013,60 @@ const ServerSettingsPage = () => {
   }
 
   return (
-    <div className="h-screen w-full bg-chat-area text-foreground flex">
-      <div className="w-64 border-r border-border/50 bg-channel-bar p-4">
-        <button
-          onClick={() => navigate("/")}
-          className="mb-4 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Server
-        </button>
-        <p className="px-2 text-xs uppercase tracking-wide text-muted-foreground mb-2">Server Settings</p>
-        <div className="space-y-1">
-          {tabs.map((entry) => (
-            <button
-              key={entry.id}
-              onClick={() => setTab(entry.id)}
-              className={`w-full text-left px-2 py-2 rounded-md text-sm flex items-center gap-2 ${
-                tab === entry.id
-                  ? "bg-secondary text-foreground font-medium"
-                  : "text-muted-foreground hover:text-foreground hover:bg-chat-hover"
-              }`}
-            >
-              <entry.icon className="w-4 h-4" />
-              {entry.label}
-            </button>
-          ))}
+    <div className="h-[100dvh] w-full bg-chat-area text-foreground flex">
+      {!isMobile && (
+        <div className="w-64 border-r border-border/50 bg-channel-bar p-4">
+          <button
+            onClick={() => navigate("/")}
+            className="mb-4 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to Server
+          </button>
+          <p className="px-2 text-xs uppercase tracking-wide text-muted-foreground mb-2">Server Settings</p>
+          <div className="space-y-1">
+            {tabs.map((entry) => (
+              <button
+                key={entry.id}
+                onClick={() => setTab(entry.id)}
+                className={`w-full text-left px-2 py-2 rounded-md text-sm flex items-center gap-2 ${
+                  tab === entry.id
+                    ? "bg-secondary text-foreground font-medium"
+                    : "text-muted-foreground hover:text-foreground hover:bg-chat-hover"
+                }`}
+              >
+                <entry.icon className="w-4 h-4" />
+                {entry.label}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="flex-1 p-6 overflow-y-auto">
-        <h1 className="text-xl font-semibold mb-6">{server.name}</h1>
+      <div className="flex-1 p-4 sm:p-6 overflow-y-auto">
+        <div className="mb-6 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            {isMobile && (
+              <button
+                onClick={() => navigate("/")}
+                className="inline-flex items-center justify-center rounded-md border border-border px-2.5 py-2 text-muted-foreground hover:text-foreground"
+                title="Back to server"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </button>
+            )}
+            <h1 className="text-lg sm:text-xl font-semibold truncate">{server.name}</h1>
+          </div>
+          {isMobile && (
+            <button
+              onClick={() => setMobileNavOpen(true)}
+              className="inline-flex items-center justify-center rounded-md border border-border bg-secondary px-2.5 py-2 text-secondary-foreground"
+              title="Open settings tabs"
+            >
+              <PanelLeft className="w-4 h-4" />
+            </button>
+          )}
+        </div>
 
         {tab === "info" && (
           <div className="max-w-xl space-y-4">
@@ -1864,7 +2411,7 @@ const ServerSettingsPage = () => {
               </div>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <input
                 value={newChannelName}
                 onChange={(e) => setNewChannelName(e.target.value)}
@@ -1874,10 +2421,11 @@ const ServerSettingsPage = () => {
               />
               <select
                 value={newChannelType}
-                onChange={(e) => setNewChannelType(e.target.value as "text" | "voice")}
+                onChange={(e) => setNewChannelType(e.target.value as "text" | "forum" | "voice")}
                 className="px-2 py-2 rounded-md bg-background border border-border text-sm"
               >
                 <option value="text">Text</option>
+                <option value="forum">Forum</option>
                 <option value="voice">Voice</option>
               </select>
               <button
@@ -1894,11 +2442,17 @@ const ServerSettingsPage = () => {
               {channels.map((channel) => (
                 <div key={channel.id} className="px-3 py-2 rounded-md bg-secondary/50 flex items-center justify-between">
                   <div className="flex items-center gap-2 min-w-0">
-                    <Hash className="w-4 h-4 text-muted-foreground" />
+                    {channel.type === "voice" ? (
+                      <Volume2 className="w-4 h-4 text-muted-foreground" />
+                    ) : channel.type === "forum" ? (
+                      <MessageSquare className="w-4 h-4 text-muted-foreground" />
+                    ) : (
+                      <Hash className="w-4 h-4 text-muted-foreground" />
+                    )}
                     <span className="text-sm">{channel.name}</span>
                     <span className="text-xs text-muted-foreground capitalize">({channel.type})</span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap justify-end">
                     <select
                       value={channel.group_id || ""}
                       onChange={(e) => handleAssignChannelGroup(channel.id, e.target.value)}
@@ -1929,7 +2483,7 @@ const ServerSettingsPage = () => {
           <div className="max-w-2xl space-y-4">
             <div className="rounded-md border border-border/60 p-3 bg-secondary/20">
               <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Owner Group (Fixed Top)</p>
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   value={ownerGroupName}
                   onChange={(e) => setOwnerGroupName(e.target.value)}
@@ -1952,7 +2506,7 @@ const ServerSettingsPage = () => {
 
             <div className="rounded-md border border-border/60 p-3 bg-secondary/20">
               <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Create Role</p>
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   value={newRoleName}
                   onChange={(e) => setNewRoleName(e.target.value)}
@@ -1989,7 +2543,7 @@ const ServerSettingsPage = () => {
                         : "bg-background/70 border-border/60"
                     }`}
                   >
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
                       <button
                         onClick={() => setSelectedRoleId(role.id)}
                         className="flex items-center gap-2 text-sm hover:opacity-90"
@@ -1998,7 +2552,7 @@ const ServerSettingsPage = () => {
                         <span>{role.name}</span>
                       </button>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap justify-end">
                       <button
                         onClick={() => void handleMoveRole(role.id, "up")}
                         disabled={reorderingRoleId !== null || roles[0]?.id === role.id}
@@ -2053,6 +2607,239 @@ const ServerSettingsPage = () => {
                 </div>
               </div>
             )}
+
+            {selectedRole && (
+              <div className="rounded-md border border-border/60 p-3 bg-secondary/20 space-y-3">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Channel/Group Overrides: <span className="text-foreground normal-case">{selectedRole.name}</span>
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+                  <select
+                    value={overrideScopeType}
+                    onChange={(e) => setOverrideScopeType(e.target.value as "channel" | "group")}
+                    className="px-2 py-2 rounded-md bg-background border border-border text-xs"
+                  >
+                    <option value="channel">Channel</option>
+                    <option value="group">Group</option>
+                  </select>
+                  <select
+                    value={overrideScopeId}
+                    onChange={(e) => setOverrideScopeId(e.target.value)}
+                    className="px-2 py-2 rounded-md bg-background border border-border text-xs sm:col-span-2"
+                  >
+                    <option value="">{overrideScopeType === "channel" ? "Select channel" : "Select group"}</option>
+                    {overrideScopeOptions.map((scope) => (
+                      <option key={scope.id} value={scope.id}>
+                        {scope.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={overridePermissionKey}
+                    onChange={(e) => setOverridePermissionKey(e.target.value)}
+                    className="px-2 py-2 rounded-md bg-background border border-border text-xs"
+                  >
+                    {ROLE_PERMISSION_OPTIONS.map((perm) => (
+                      <option key={perm.key} value={perm.key}>{perm.label}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={overrideMode}
+                    onChange={(e) => setOverrideMode(e.target.value as "allow" | "deny" | "clear")}
+                    className="px-2 py-2 rounded-md bg-background border border-border text-xs"
+                  >
+                    <option value="allow">Allow</option>
+                    <option value="deny">Deny</option>
+                    <option value="clear">Clear</option>
+                  </select>
+                </div>
+                <button
+                  onClick={() => void handleApplyRoleOverride()}
+                  disabled={savingRoleOverride || !overrideScopeId}
+                  className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs disabled:opacity-50"
+                >
+                  {savingRoleOverride ? "Saving..." : "Apply Override"}
+                </button>
+                <div className="space-y-2">
+                  {loadingRoleOverrides && (
+                    <p className="text-xs text-muted-foreground">Loading overrides...</p>
+                  )}
+                  {!loadingRoleOverrides && selectedRoleOverrides.length === 0 && (
+                    <p className="text-xs text-muted-foreground">No overrides configured for this role.</p>
+                  )}
+                  {!loadingRoleOverrides && selectedRoleOverrides.map((override) => {
+                    const scopeLabel = override.scope_type === "channel"
+                      ? channels.find((channel) => channel.id === override.scope_id)?.name || "Unknown channel"
+                      : channelGroups.find((group) => group.id === override.scope_id)?.name || "Unknown group";
+                    return (
+                      <div key={override.id} className="rounded-md border border-border/60 bg-background/70 px-2 py-1.5 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-foreground">
+                            {override.scope_type === "channel" ? "#" : "Group: "}{scopeLabel}
+                          </p>
+                          <button
+                            onClick={() => void handleDeleteRoleOverride(override.id)}
+                            disabled={deletingRoleOverrideId === override.id}
+                            className="px-2 py-0.5 rounded bg-destructive/10 text-destructive disabled:opacity-50"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                        <p className="text-muted-foreground mt-1">
+                          Allow: {override.allow_permissions.join(", ") || "none"}
+                        </p>
+                        <p className="text-muted-foreground">
+                          Deny: {override.deny_permissions.join(", ") || "none"}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="rounded-md border border-border/60 p-3 bg-secondary/20 space-y-2">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Temporary Role Grants</p>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                <select
+                  value={grantMemberId}
+                  onChange={(e) => setGrantMemberId(e.target.value)}
+                  className="px-2 py-2 rounded-md bg-background border border-border text-xs"
+                >
+                  <option value="">Select member</option>
+                  {nonOwnerMembers.map((member) => (
+                    <option key={member.id} value={member.id}>{member.display_name}</option>
+                  ))}
+                </select>
+                <select
+                  value={grantRoleId}
+                  onChange={(e) => setGrantRoleId(e.target.value)}
+                  className="px-2 py-2 rounded-md bg-background border border-border text-xs"
+                >
+                  <option value="">Select role</option>
+                  {roles.map((role) => (
+                    <option key={role.id} value={role.id}>{role.name}</option>
+                  ))}
+                </select>
+                <input
+                  type="datetime-local"
+                  value={grantExpiresAt}
+                  onChange={(e) => setGrantExpiresAt(e.target.value)}
+                  className="px-2 py-2 rounded-md bg-background border border-border text-xs"
+                />
+                <button
+                  onClick={() => void handleGrantTemporaryRole()}
+                  disabled={!grantMemberId || !grantRoleId || !grantExpiresAt || savingTemporaryRoleGrant}
+                  className="px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs disabled:opacity-50"
+                >
+                  {savingTemporaryRoleGrant ? "Granting..." : "Grant Temporarily"}
+                </button>
+              </div>
+              {loadingTemporaryRoleGrants && (
+                <p className="text-xs text-muted-foreground">Loading temporary grants...</p>
+              )}
+              {!loadingTemporaryRoleGrants && activeTemporaryRoleGrants.length === 0 && (
+                <p className="text-xs text-muted-foreground">No active temporary grants.</p>
+              )}
+              {!loadingTemporaryRoleGrants && activeTemporaryRoleGrants.map((grant) => (
+                <div key={grant.id} className="rounded-md border border-border/60 bg-background/70 px-2 py-1.5 text-xs flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-foreground truncate">
+                      {(memberById.get(grant.user_id)?.display_name || grant.user_id)}
+                      {" -> "}
+                      {(roleById.get(grant.role_id)?.name || "Unknown role")}
+                    </p>
+                    <p className="text-muted-foreground">
+                      Expires {grant.expires_at ? new Date(grant.expires_at).toLocaleString() : "Never"}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => void handleRevokeTemporaryRole(grant.id)}
+                    disabled={deletingTemporaryRoleGrantId === grant.id}
+                    className="px-2 py-0.5 rounded bg-destructive/10 text-destructive disabled:opacity-50"
+                  >
+                    Revoke
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="rounded-md border border-border/60 p-3 bg-secondary/20 space-y-2">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Role Templates (Import / Export)</p>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                  placeholder="Template name (optional)"
+                  className="flex-1 px-3 py-2 rounded-md bg-background border border-border text-sm"
+                />
+                <button
+                  onClick={() => void handleSaveRoleTemplate()}
+                  disabled={savingRoleTemplate}
+                  className="px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs disabled:opacity-50"
+                >
+                  {savingRoleTemplate ? "Saving..." : "Save Current Roles"}
+                </button>
+              </div>
+              {loadingRoleTemplates && (
+                <p className="text-xs text-muted-foreground">Loading templates...</p>
+              )}
+              {!loadingRoleTemplates && roleTemplates.length === 0 && (
+                <p className="text-xs text-muted-foreground">No templates yet.</p>
+              )}
+              {!loadingRoleTemplates && roleTemplates.map((template) => (
+                <div key={template.id} className="rounded-md border border-border/60 bg-background/70 px-2 py-1.5 text-xs space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-foreground font-medium">{template.name}</p>
+                    <p className="text-muted-foreground">{new Date(template.updated_at).toLocaleString()}</p>
+                  </div>
+                  <p className="text-muted-foreground">{template.definition.roles.length} roles</p>
+                  <div className="flex items-center gap-2 flex-wrap justify-end">
+                    <button
+                      onClick={() => void handleApplyRoleTemplate(template)}
+                      disabled={applyingRoleTemplateId === template.id}
+                      className="px-2 py-0.5 rounded bg-primary text-primary-foreground disabled:opacity-50"
+                    >
+                      {applyingRoleTemplateId === template.id ? "Applying..." : "Apply"}
+                    </button>
+                    <button
+                      onClick={() => void handleExportRoleTemplate(template)}
+                      className="px-2 py-0.5 rounded bg-secondary text-secondary-foreground"
+                    >
+                      Export
+                    </button>
+                    <button
+                      onClick={() => void handleDeleteRoleTemplate(template.id)}
+                      disabled={deletingRoleTemplateId === template.id}
+                      className="px-2 py-0.5 rounded bg-destructive/10 text-destructive disabled:opacity-50"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+              <textarea
+                value={templateImportJson}
+                onChange={(e) => setTemplateImportJson(e.target.value)}
+                rows={5}
+                placeholder='Import JSON, e.g. {"name":"Moderation Set","roles":[...]}'
+                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+              />
+              <button
+                onClick={() => void handleImportRoleTemplate()}
+                disabled={!templateImportJson.trim() || savingRoleTemplate}
+                className="px-3 py-1.5 rounded-md bg-secondary text-secondary-foreground text-xs disabled:opacity-50"
+              >
+                Import Template JSON
+              </button>
+              <textarea
+                value={exportedTemplateJson}
+                onChange={(e) => setExportedTemplateJson(e.target.value)}
+                rows={5}
+                placeholder="Exported template JSON appears here"
+                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+              />
+            </div>
 
             <div className="space-y-2">
               <div className="relative">
@@ -2167,7 +2954,7 @@ const ServerSettingsPage = () => {
               <div className="rounded-md border border-border/60 p-3 bg-secondary/20">
                 <div className="flex flex-col gap-2 mb-3 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Server Bans</p>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <div className="relative">
                       <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" />
                       <input
@@ -2233,7 +3020,7 @@ const ServerSettingsPage = () => {
                               </TableCell>
                               {hasBanPermission && (
                                 <TableCell className="text-right">
-                                  <div className="inline-flex items-center gap-2">
+                                  <div className="inline-flex flex-wrap items-center gap-2 justify-end">
                                     <button
                                       onClick={() => handleStartEditBan(ban)}
                                       className="text-xs px-2 py-1 rounded bg-secondary text-secondary-foreground hover:opacity-90"
@@ -2301,7 +3088,7 @@ const ServerSettingsPage = () => {
               <div className="rounded-md border border-border/60 p-3 bg-secondary/20 space-y-3">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">AutoMod Rules</p>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       onClick={() => void loadAutomodSettings()}
                       className="text-xs px-2 py-1 rounded bg-secondary text-secondary-foreground hover:opacity-90"
@@ -2533,7 +3320,7 @@ const ServerSettingsPage = () => {
                               {appeal.assigned_to ? (memberById.get(appeal.assigned_to)?.display_name || appeal.assigned_to) : "Unassigned"}
                             </TableCell>
                             <TableCell className="text-xs">
-                              <div className="inline-flex items-center gap-2">
+                              <div className="inline-flex flex-wrap items-center gap-2">
                                 <button
                                   onClick={() => void handleAppealDecision(appeal, "under_review")}
                                   disabled={updatingAppealId === appeal.id}
@@ -2570,7 +3357,7 @@ const ServerSettingsPage = () => {
               <div className="rounded-md border border-border/60 p-3 bg-secondary/20">
                 <div className="flex flex-col gap-2 mb-3 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Audit Log</p>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <div className="relative">
                       <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" />
                       <input
@@ -2642,6 +3429,44 @@ const ServerSettingsPage = () => {
               </div>
             )}
           </div>
+        )}
+        {isMobile && (
+          <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+            <SheetContent side="left" className="w-[88vw] max-w-sm p-0">
+              <div className="h-full bg-channel-bar p-4">
+                <button
+                  onClick={() => {
+                    navigate("/");
+                    setMobileNavOpen(false);
+                  }}
+                  className="mb-4 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Back to Server
+                </button>
+                <p className="px-2 text-xs uppercase tracking-wide text-muted-foreground mb-2">Server Settings</p>
+                <div className="space-y-1">
+                  {tabs.map((entry) => (
+                    <button
+                      key={entry.id}
+                      onClick={() => {
+                        setTab(entry.id);
+                        setMobileNavOpen(false);
+                      }}
+                      className={`w-full text-left px-2 py-2 rounded-md text-sm flex items-center gap-2 ${
+                        tab === entry.id
+                          ? "bg-secondary text-foreground font-medium"
+                          : "text-muted-foreground hover:text-foreground hover:bg-chat-hover"
+                      }`}
+                    >
+                      <entry.icon className="w-4 h-4" />
+                      {entry.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
         )}
         <AlertDialog open={showDeleteServerConfirm} onOpenChange={setShowDeleteServerConfirm}>
           <AlertDialogContent>

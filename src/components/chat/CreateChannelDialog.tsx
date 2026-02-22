@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useChatContext } from "@/context/ChatContext";
-import { Hash, Volume2, X } from "lucide-react";
+import { Hash, MessageSquare, Volume2, X } from "lucide-react";
 
 interface CreateChannelDialogProps {
   open: boolean;
@@ -11,7 +11,7 @@ interface CreateChannelDialogProps {
 const CreateChannelDialog = ({ open, onClose }: CreateChannelDialogProps) => {
   const { activeServerId, setActiveChannel, refreshChannels } = useChatContext();
   const [name, setName] = useState("");
-  const [type, setType] = useState<"text" | "voice">("text");
+  const [type, setType] = useState<"text" | "forum" | "voice">("text");
   const [loading, setLoading] = useState(false);
 
   const handleCreate = async () => {
@@ -25,7 +25,7 @@ const CreateChannelDialog = ({ open, onClose }: CreateChannelDialogProps) => {
       .select()
       .single();
 
-    if (data && type === "text") {
+    if (data && (type === "text" || type === "forum")) {
       setActiveChannel(data.id);
     }
 
@@ -54,12 +54,15 @@ const CreateChannelDialog = ({ open, onClose }: CreateChannelDialogProps) => {
             <button onClick={() => setType("voice")} className={`flex-1 flex items-center gap-2 px-3 py-2.5 rounded-md border text-sm font-medium transition-colors ${type === "voice" ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:text-foreground"}`}>
               <Volume2 className="w-4 h-4" /> Voice
             </button>
+            <button onClick={() => setType("forum")} className={`flex-1 flex items-center gap-2 px-3 py-2.5 rounded-md border text-sm font-medium transition-colors ${type === "forum" ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:text-foreground"}`}>
+              <MessageSquare className="w-4 h-4" /> Forum
+            </button>
           </div>
         </div>
         <div className="mb-4">
           <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 block">Channel Name</label>
           <div className="flex items-center gap-2 px-3 py-2.5 rounded-md bg-background border border-border">
-            {type === "text" ? <Hash className="w-4 h-4 text-muted-foreground" /> : <Volume2 className="w-4 h-4 text-muted-foreground" />}
+            {type === "voice" ? <Volume2 className="w-4 h-4 text-muted-foreground" /> : type === "forum" ? <MessageSquare className="w-4 h-4 text-muted-foreground" /> : <Hash className="w-4 h-4 text-muted-foreground" />}
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}

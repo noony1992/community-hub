@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X, Settings, Hash, Trash2, Shield, Users, Plus } from "lucide-react";
+import { X, Settings, Hash, MessageSquare, Trash2, Shield, Users, Plus, Volume2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useChatContext } from "@/context/ChatContext";
 import { useAuth } from "@/context/AuthContext";
@@ -166,6 +166,7 @@ const ServerSettingsDialog = ({ open, onClose }: ServerSettingsDialogProps) => {
                     className="px-2 py-2 rounded-md bg-background text-foreground border border-border text-sm"
                   >
                     <option value="text">Text</option>
+                    <option value="forum">Forum</option>
                     <option value="voice">Voice</option>
                   </select>
                   <button onClick={handleCreateChannel} className="px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium">
@@ -176,7 +177,13 @@ const ServerSettingsDialog = ({ open, onClose }: ServerSettingsDialogProps) => {
               {channels.map((ch) => (
                 <div key={ch.id} className="flex items-center justify-between px-3 py-2 rounded-md bg-secondary/50">
                   <div className="flex items-center gap-2">
-                    <Hash className="w-4 h-4 text-muted-foreground" />
+                    {ch.type === "voice" ? (
+                      <Volume2 className="w-4 h-4 text-muted-foreground" />
+                    ) : ch.type === "forum" ? (
+                      <MessageSquare className="w-4 h-4 text-muted-foreground" />
+                    ) : (
+                      <Hash className="w-4 h-4 text-muted-foreground" />
+                    )}
                     <span className="text-sm text-foreground">{ch.name}</span>
                     <span className="text-xs text-muted-foreground capitalize">({ch.type})</span>
                   </div>

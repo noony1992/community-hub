@@ -18,8 +18,18 @@ interface VoiceParticipant {
 
 type VoiceModerationAction = "kick" | "force_mute" | "force_unmute" | "move";
 
+type ConnectedVoiceInfo = {
+  channelId: string;
+  channelName: string;
+  serverId: string | null;
+  serverName: string | null;
+};
+
+export type VideoQualityPreset = "low" | "balanced" | "high";
+
 interface VoiceState {
   activeVoiceChannelId: string | null;
+  connectedVoice: ConnectedVoiceInfo | null;
   participants: VoiceParticipant[];
   videoStreamsByUser: Record<string, MediaStream>;
   isConnected: boolean;
@@ -35,6 +45,14 @@ interface VoiceState {
   toggleDeafen: () => void;
   toggleCamera: () => Promise<void>;
   toggleScreenShare: () => Promise<void>;
+  headphoneVolume: number;
+  microphoneLevel: number;
+  cameraQuality: VideoQualityPreset;
+  screenQuality: VideoQualityPreset;
+  setHeadphoneVolume: (level: number) => void;
+  setMicrophoneLevel: (level: number) => void;
+  setCameraQuality: (quality: VideoQualityPreset) => void;
+  setScreenQuality: (quality: VideoQualityPreset) => void;
 }
 
 const VoiceContext = createContext<VoiceState | null>(null);
@@ -47,6 +65,105 @@ export const useVoiceContext = () => {
 
 const rtcConfig: RTCConfiguration = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+};
+
+const VOICE_SETTINGS_STORAGE_KEY = "voice-settings:v1";
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const toFiniteNumber = (value: unknown, fallback: number) => {
+  const next = Number(value);
+  return Number.isFinite(next) ? next : fallback;
+};
+
+const sanitizeQualityPreset = (value: unknown): VideoQualityPreset => {
+  if (value === "low" || value === "balanced" || value === "high") return value;
+  return "balanced";
+};
+
+const readStoredVoiceSettings = () => {
+  if (typeof window === "undefined") {
+    return {
+      headphoneVolume: 100,
+      microphoneLevel: 100,
+      cameraQuality: "balanced" as VideoQualityPreset,
+      screenQuality: "balanced" as VideoQualityPreset,
+    };
+  }
+
+  try {
+    const raw = window.localStorage.getItem(VOICE_SETTINGS_STORAGE_KEY);
+    if (!raw) {
+      return {
+        headphoneVolume: 100,
+        microphoneLevel: 100,
+        cameraQuality: "balanced" as VideoQualityPreset,
+        screenQuality: "balanced" as VideoQualityPreset,
+      };
+    }
+    const parsed = JSON.parse(raw) as {
+      headphoneVolume?: unknown;
+      microphoneLevel?: unknown;
+      cameraQuality?: unknown;
+      screenQuality?: unknown;
+    };
+    return {
+      headphoneVolume: clamp(toFiniteNumber(parsed.headphoneVolume, 100), 0, 100),
+      microphoneLevel: clamp(toFiniteNumber(parsed.microphoneLevel, 100), 0, 200),
+      cameraQuality: sanitizeQualityPreset(parsed.cameraQuality),
+      screenQuality: sanitizeQualityPreset(parsed.screenQuality),
+    };
+  } catch {
+    return {
+      headphoneVolume: 100,
+      microphoneLevel: 100,
+      cameraQuality: "balanced" as VideoQualityPreset,
+      screenQuality: "balanced" as VideoQualityPreset,
+    };
+  }
+};
+
+const getCameraVideoConstraints = (quality: VideoQualityPreset): MediaTrackConstraints => {
+  if (quality === "low") {
+    return {
+      width: { ideal: 640, max: 960 },
+      height: { ideal: 360, max: 540 },
+      frameRate: { ideal: 15, max: 24 },
+    };
+  }
+  if (quality === "high") {
+    return {
+      width: { ideal: 1920, max: 1920 },
+      height: { ideal: 1080, max: 1080 },
+      frameRate: { ideal: 30, max: 30 },
+    };
+  }
+  return {
+    width: { ideal: 1280, max: 1280 },
+    height: { ideal: 720, max: 720 },
+    frameRate: { ideal: 24, max: 30 },
+  };
+};
+
+const getScreenVideoConstraints = (quality: VideoQualityPreset): MediaTrackConstraints => {
+  if (quality === "low") {
+    return {
+      width: { ideal: 1280, max: 1280 },
+      height: { ideal: 720, max: 720 },
+      frameRate: { ideal: 10, max: 15 },
+    };
+  }
+  if (quality === "high") {
+    return {
+      width: { ideal: 2560, max: 2560 },
+      height: { ideal: 1440, max: 1440 },
+      frameRate: { ideal: 30, max: 30 },
+    };
+  }
+  return {
+    width: { ideal: 1920, max: 1920 },
+    height: { ideal: 1080, max: 1080 },
+    frameRate: { ideal: 20, max: 30 },
+  };
 };
 
 type SignalPayload = {
@@ -64,7 +181,9 @@ type VoiceModPayload = {
 
 export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
+  const initialSettings = readStoredVoiceSettings();
   const [activeVoiceChannelId, setActiveVoiceChannelId] = useState<string | null>(null);
+  const [connectedVoice, setConnectedVoice] = useState<ConnectedVoiceInfo | null>(null);
   const [participants, setParticipants] = useState<VoiceParticipant[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
@@ -73,12 +192,20 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [voiceLatencyMs, setVoiceLatencyMs] = useState<number | null>(null);
+  const [headphoneVolume, setHeadphoneVolumeState] = useState<number>(initialSettings.headphoneVolume);
+  const [microphoneLevel, setMicrophoneLevelState] = useState<number>(initialSettings.microphoneLevel);
+  const [cameraQuality, setCameraQualityState] = useState<VideoQualityPreset>(initialSettings.cameraQuality);
+  const [screenQuality, setScreenQualityState] = useState<VideoQualityPreset>(initialSettings.screenQuality);
 
   const localStreamRef = useRef<MediaStream | null>(null);
+  const rawMicrophoneStreamRef = useRef<MediaStream | null>(null);
   const localCameraStreamRef = useRef<MediaStream | null>(null);
   const localScreenStreamRef = useRef<MediaStream | null>(null);
   const activeVideoTrackRef = useRef<MediaStreamTrack | null>(null);
   const activeVideoSourceRef = useRef<"camera" | "screen" | null>(null);
+  const microphoneGainNodeRef = useRef<GainNode | null>(null);
+  const microphoneSourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const microphoneDestinationNodeRef = useRef<MediaStreamAudioDestinationNode | null>(null);
   const signalChannelRef = useRef<RealtimeChannel | null>(null);
   const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const videoSenderByPeerRef = useRef<Map<string, RTCRtpSender>>(new Map());
@@ -94,7 +221,38 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const isForcedMutedRef = useRef(false);
   const isCameraOnRef = useRef(false);
   const isScreenSharingRef = useRef(false);
+  const headphoneVolumeRef = useRef(initialSettings.headphoneVolume);
+  const microphoneLevelRef = useRef(initialSettings.microphoneLevel);
   const joinVoiceChannelRef = useRef<(channelId: string) => Promise<void>>(async () => undefined);
+  const connectedVoiceChannelIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    headphoneVolumeRef.current = headphoneVolume;
+    const volume = clamp(headphoneVolume, 0, 100) / 100;
+    audioElementsRef.current.forEach((audio) => {
+      audio.volume = volume;
+    });
+  }, [headphoneVolume]);
+
+  useEffect(() => {
+    microphoneLevelRef.current = microphoneLevel;
+    if (microphoneGainNodeRef.current) {
+      microphoneGainNodeRef.current.gain.value = clamp(microphoneLevel, 0, 200) / 100;
+    }
+  }, [microphoneLevel]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      VOICE_SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        headphoneVolume,
+        microphoneLevel,
+        cameraQuality,
+        screenQuality,
+      }),
+    );
+  }, [cameraQuality, headphoneVolume, microphoneLevel, screenQuality]);
 
   useEffect(() => {
     isMutedRef.current = isMuted;
@@ -124,6 +282,52 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       "Unknown"
     );
   }, [user]);
+
+  const ensureAudioContext = useCallback(() => {
+    if (!audioContextRef.current) {
+      const Ctx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!Ctx) return null;
+      audioContextRef.current = new Ctx();
+    }
+    return audioContextRef.current;
+  }, []);
+
+  const loadConnectedVoiceInfo = useCallback(async (channelId: string) => {
+    const { data: channel } = await supabase
+      .from("channels")
+      .select("id, name, server_id")
+      .eq("id", channelId)
+      .maybeSingle();
+
+    if (connectedVoiceChannelIdRef.current !== channelId) return;
+    if (!channel) {
+      setConnectedVoice({
+        channelId,
+        channelName: "voice-channel",
+        serverId: null,
+        serverName: null,
+      });
+      return;
+    }
+
+    let serverName: string | null = null;
+    if (channel.server_id) {
+      const { data: server } = await supabase
+        .from("servers")
+        .select("name")
+        .eq("id", channel.server_id)
+        .maybeSingle();
+      serverName = server?.name || null;
+    }
+
+    if (connectedVoiceChannelIdRef.current !== channelId) return;
+    setConnectedVoice({
+      channelId: channel.id,
+      channelName: channel.name,
+      serverId: channel.server_id || null,
+      serverName,
+    });
+  }, []);
 
   const updateLocalAudioTrack = useCallback((muted: boolean, deafened: boolean) => {
     const enabled = !(muted || deafened);
@@ -197,13 +401,8 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const startSpeakingDetection = useCallback((userId: string, stream: MediaStream) => {
     if (speakingCleanupRef.current.has(userId)) return;
 
-    if (!audioContextRef.current) {
-      const Ctx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!Ctx) return;
-      audioContextRef.current = new Ctx();
-    }
-
-    const audioContext = audioContextRef.current;
+    const audioContext = ensureAudioContext();
+    if (!audioContext) return;
     const analyser = audioContext.createAnalyser();
     analyser.fftSize = 256;
     analyser.smoothingTimeConstant = 0.85;
@@ -240,12 +439,35 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       source.disconnect();
       analyser.disconnect();
     });
-  }, []);
+  }, [ensureAudioContext]);
 
   const stopMediaStream = useCallback((stream: MediaStream | null) => {
     if (!stream) return;
     stream.getTracks().forEach((track) => track.stop());
   }, []);
+
+  const buildProcessedLocalAudioStream = useCallback((rawMicrophoneStream: MediaStream) => {
+    const context = ensureAudioContext();
+    if (!context) return rawMicrophoneStream;
+
+    microphoneSourceNodeRef.current?.disconnect();
+    microphoneGainNodeRef.current?.disconnect();
+
+    const source = context.createMediaStreamSource(rawMicrophoneStream);
+    const gain = context.createGain();
+    gain.gain.value = clamp(microphoneLevelRef.current, 0, 200) / 100;
+    const destination = context.createMediaStreamDestination();
+    source.connect(gain);
+    gain.connect(destination);
+
+    microphoneSourceNodeRef.current = source;
+    microphoneGainNodeRef.current = gain;
+    microphoneDestinationNodeRef.current = destination;
+
+    const [processedTrack] = destination.stream.getAudioTracks();
+    if (!processedTrack) return rawMicrophoneStream;
+    return new MediaStream([processedTrack]);
+  }, [ensureAudioContext]);
 
   const leaveVoiceChannel = useCallback(async () => {
     peersRef.current.forEach((peer) => peer.close());
@@ -281,6 +503,15 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       localStreamRef.current.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
     }
+    if (rawMicrophoneStreamRef.current) {
+      rawMicrophoneStreamRef.current.getTracks().forEach((track) => track.stop());
+      rawMicrophoneStreamRef.current = null;
+    }
+    microphoneSourceNodeRef.current?.disconnect();
+    microphoneGainNodeRef.current?.disconnect();
+    microphoneSourceNodeRef.current = null;
+    microphoneGainNodeRef.current = null;
+    microphoneDestinationNodeRef.current = null;
     stopMediaStream(localCameraStreamRef.current);
     stopMediaStream(localScreenStreamRef.current);
     localCameraStreamRef.current = null;
@@ -297,6 +528,8 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setVideoStreamsByUser({});
     setIsConnected(false);
     setActiveVoiceChannelId(null);
+    connectedVoiceChannelIdRef.current = null;
+    setConnectedVoice(null);
     setIsCameraOn(false);
     setIsScreenSharing(false);
     isCameraOnRef.current = false;
@@ -645,16 +878,18 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       await leaveVoiceChannel();
 
-      let localStream: MediaStream;
+      let rawMicrophoneStream: MediaStream;
       try {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        rawMicrophoneStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       } catch {
         alert("Microphone access is required for voice channels.");
         return;
       }
 
+      rawMicrophoneStreamRef.current = rawMicrophoneStream;
+      const localStream = buildProcessedLocalAudioStream(rawMicrophoneStream);
       localStreamRef.current = localStream;
-      startSpeakingDetection(user.id, localStream);
+      startSpeakingDetection(user.id, rawMicrophoneStream);
       updateLocalAudioTrack(isMutedRef.current, isDeafenedRef.current);
 
       const voiceChannel = supabase.channel(`voice:${channelId}`, {
@@ -732,11 +967,19 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           signalChannelRef.current = voiceChannel;
           setIsConnected(true);
           setActiveVoiceChannelId(channelId);
+          connectedVoiceChannelIdRef.current = channelId;
+          setConnectedVoice({
+            channelId,
+            channelName: "voice-channel",
+            serverId: null,
+            serverName: null,
+          });
+          void loadConnectedVoiceInfo(channelId);
           updatePresence();
         }
       });
     },
-    [activeVoiceChannelId, createPeer, isConnected, leaveVoiceChannel, sendSignal, startSpeakingDetection, syncParticipantsFromPresence, updateLocalAudioTrack, updatePresence, user],
+    [activeVoiceChannelId, buildProcessedLocalAudioStream, createPeer, isConnected, leaveVoiceChannel, loadConnectedVoiceInfo, sendSignal, startSpeakingDetection, syncParticipantsFromPresence, updateLocalAudioTrack, updatePresence, user],
   );
 
   useEffect(() => {
@@ -804,7 +1047,9 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: getCameraVideoConstraints(cameraQuality),
+      });
     } catch {
       toast.error("Camera access was denied.");
       return;
@@ -822,7 +1067,7 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     isCameraOnRef.current = true;
     isScreenSharingRef.current = false;
     requestAnimationFrame(updatePresence);
-  }, [activateVideoSource, clearActiveVideoSource, isConnected, stopMediaStream, updatePresence]);
+  }, [activateVideoSource, cameraQuality, clearActiveVideoSource, isConnected, stopMediaStream, updatePresence]);
 
   const toggleScreenShare = useCallback(async () => {
     if (!isConnected) {
@@ -849,7 +1094,9 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: getScreenVideoConstraints(screenQuality),
+      });
     } catch {
       toast.error("Screen share permission was denied.");
       return;
@@ -884,7 +1131,33 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     isScreenSharingRef.current = true;
     isCameraOnRef.current = false;
     requestAnimationFrame(updatePresence);
-  }, [activateVideoSource, clearActiveVideoSource, isConnected, stopMediaStream, updatePresence]);
+  }, [activateVideoSource, clearActiveVideoSource, isConnected, screenQuality, stopMediaStream, updatePresence]);
+
+  useEffect(() => {
+    if (activeVideoSourceRef.current !== "camera" || !activeVideoTrackRef.current) return;
+    void activeVideoTrackRef.current.applyConstraints(getCameraVideoConstraints(cameraQuality)).catch(() => undefined);
+  }, [cameraQuality]);
+
+  useEffect(() => {
+    if (activeVideoSourceRef.current !== "screen" || !activeVideoTrackRef.current) return;
+    void activeVideoTrackRef.current.applyConstraints(getScreenVideoConstraints(screenQuality)).catch(() => undefined);
+  }, [screenQuality]);
+
+  const setHeadphoneVolume = useCallback((level: number) => {
+    setHeadphoneVolumeState(clamp(Math.round(level), 0, 100));
+  }, []);
+
+  const setMicrophoneLevel = useCallback((level: number) => {
+    setMicrophoneLevelState(clamp(Math.round(level), 0, 200));
+  }, []);
+
+  const setCameraQuality = useCallback((quality: VideoQualityPreset) => {
+    setCameraQualityState(sanitizeQualityPreset(quality));
+  }, []);
+
+  const setScreenQuality = useCallback((quality: VideoQualityPreset) => {
+    setScreenQualityState(sanitizeQualityPreset(quality));
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -911,6 +1184,7 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const value = useMemo(
     () => ({
       activeVoiceChannelId,
+      connectedVoice,
       participants,
       videoStreamsByUser,
       isConnected,
@@ -919,6 +1193,10 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       isCameraOn,
       isScreenSharing,
       voiceLatencyMs,
+      headphoneVolume,
+      microphoneLevel,
+      cameraQuality,
+      screenQuality,
       moderateVoiceParticipant,
       joinVoiceChannel,
       leaveVoiceChannel,
@@ -926,9 +1204,16 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       toggleDeafen,
       toggleCamera,
       toggleScreenShare,
+      setHeadphoneVolume,
+      setMicrophoneLevel,
+      setCameraQuality,
+      setScreenQuality,
     }),
     [
       activeVoiceChannelId,
+      cameraQuality,
+      connectedVoice,
+      headphoneVolume,
       isCameraOn,
       isConnected,
       isDeafened,
@@ -936,8 +1221,14 @@ export const VoiceProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       isScreenSharing,
       joinVoiceChannel,
       leaveVoiceChannel,
+      microphoneLevel,
       moderateVoiceParticipant,
       participants,
+      screenQuality,
+      setCameraQuality,
+      setHeadphoneVolume,
+      setMicrophoneLevel,
+      setScreenQuality,
       toggleDeafen,
       toggleCamera,
       toggleMute,

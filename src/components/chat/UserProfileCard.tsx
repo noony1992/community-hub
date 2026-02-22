@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { X, MessageSquare, AtSign, Calendar, MoreVertical, Shield } from "lucide-react";
 import { format } from "date-fns";
+import { toast } from "sonner";
 import { useDMContext } from "@/context/DMContext";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -59,12 +60,22 @@ const UserProfileCard = ({ user, open, onClose, position, serverId, serverRole, 
 
   const initials = user.display_name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   const avatarColor = `hsl(${(user.id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)`;
+  const isSelf = user.id === currentUser?.id;
 
   const handleDM = async () => {
+    if (isSelf) {
+      toast.error("You cannot message yourself.");
+      return;
+    }
     setLoading(true);
-    await startConversation(user.id);
+    const conversationId = await startConversation(user.id);
     setLoading(false);
+    if (!conversationId) {
+      toast.error("Could not open a direct message.");
+      return;
+    }
     onClose();
+    navigate(`/?view=dm&dm=${encodeURIComponent(conversationId)}`);
   };
 
   return (
@@ -159,11 +170,11 @@ const UserProfileCard = ({ user, open, onClose, position, serverId, serverRole, 
 
           <button
             onClick={handleDM}
-            disabled={loading}
+            disabled={loading || isSelf}
             className="mt-4 w-full flex items-center justify-center gap-2 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
           >
             <MessageSquare className="w-4 h-4" />
-            {loading ? "Opening..." : "Message"}
+            {loading ? "Opening..." : isSelf ? "Cannot Message Yourself" : "Message"}
           </button>
           <button
             onClick={() => {

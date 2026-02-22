@@ -2,7 +2,7 @@ import { Fragment, useState, useRef, useEffect, useMemo, useCallback } from "rea
 import { useChatContext, type Message } from "@/context/ChatContext";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { Hash, Pin, Users, Search, Inbox, HelpCircle, PlusCircle, Gift, Smile, SendHorizonal, Pencil, Trash2, X, Check, Paperclip, FileIcon, ImageIcon, MessageSquare, Reply, Volume2, PhoneOff, CalendarClock, Megaphone, BarChart3, CalendarDays, MicOff, UserX, Video, VideoOff, ScreenShare, ScreenShareOff, Maximize2 } from "lucide-react";
+import { Hash, Pin, Users, Search, Inbox, HelpCircle, PlusCircle, Gift, Smile, SendHorizonal, Pencil, Trash2, X, Check, Paperclip, FileIcon, ImageIcon, MessageSquare, Reply, Volume2, PhoneOff, CalendarClock, Megaphone, BarChart3, CalendarDays, MicOff, UserX, Video, VideoOff, ScreenShare, ScreenShareOff, Maximize2, PanelLeft, Menu } from "lucide-react";
 import { format, isSameDay, isToday, isYesterday } from "date-fns";
 import { toast } from "sonner";
 import EmojiPicker from "./EmojiPicker";
@@ -14,7 +14,7 @@ import MentionAutocomplete, { renderContentWithMentions } from "./MentionAutocom
 import UserProfileCard from "./UserProfileCard";
 import { useVoiceContext } from "@/context/VoiceContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { encodePoll, encodeQuestion, parseMessageFeatures, type PollDefinition } from "@/lib/messageFeatures";
+import { encodeForumTopic, encodePoll, encodeQuestion, parseMessageFeatures, type ForumTopicDefinition, type PollDefinition } from "@/lib/messageFeatures";
 import { useSearchParams } from "react-router-dom";
 
 type ServerEvent = {
@@ -51,7 +51,19 @@ type OnboardingStep = {
   position: number;
 };
 
-const ChatArea = () => {
+type ChatAreaProps = {
+  isMobile?: boolean;
+  onOpenServers?: () => void;
+  onOpenChannels?: () => void;
+  onOpenMembers?: () => void;
+};
+
+const ChatArea = ({
+  isMobile = false,
+  onOpenServers,
+  onOpenChannels,
+  onOpenMembers,
+}: ChatAreaProps) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const { activeChannelId, activeServerId, channels, messages, sendMessage, scheduleMessage, editMessage, deleteMessage, members, profile, typingUsers, setTyping, addReaction, pinMessage, unpinMessage, moderationState, servers, unreadCountByChannel, channelLastReadAtByChannel, markChannelAsRead, setActiveChannel } = useChatContext();
@@ -97,10 +109,14 @@ const ChatArea = () => {
   const [scheduleAnnouncement, setScheduleAnnouncement] = useState(false);
   const [scheduling, setScheduling] = useState(false);
   const [showPollModal, setShowPollModal] = useState(false);
+  const [showCreateTopicModal, setShowCreateTopicModal] = useState(false);
   const [pollQuestion, setPollQuestion] = useState("");
   const [pollOptions, setPollOptions] = useState<string[]>(["", ""]);
   const [pollMultipleChoice, setPollMultipleChoice] = useState(false);
   const [creatingPoll, setCreatingPoll] = useState(false);
+  const [topicTitle, setTopicTitle] = useState("");
+  const [topicBody, setTopicBody] = useState("");
+  const [creatingTopic, setCreatingTopic] = useState(false);
   const [pollVotesByMessage, setPollVotesByMessage] = useState<Record<string, Record<number, string[]>>>({});
   const [qaModeEnabled, setQaModeEnabled] = useState(false);
   const [togglingQaMode, setTogglingQaMode] = useState(false);
@@ -127,11 +143,18 @@ const ChatArea = () => {
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const shouldAutoScrollRef = useRef(true);
   const restrictionToastAtRef = useRef<number>(0);
   const voiceVideoContainerRefByUser = useRef<Record<string, HTMLDivElement | null>>({});
+  const isNearBottom = useCallback(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return false;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  }, []);
 
   const channel = channels.find((c) => c.id === activeChannelId);
   const isVoiceChannelView = channel?.type === "voice";
+  const isForumChannelView = channel?.type === "forum";
   const timedOutActive = !!moderationState.timed_out_until && new Date(moderationState.timed_out_until).getTime() > Date.now();
   const mutedActive = !!moderationState.muted_until && new Date(moderationState.muted_until).getTime() > Date.now();
   const bannedActive = moderationState.is_banned;
@@ -517,8 +540,9 @@ const ChatArea = () => {
 
   useEffect(() => {
     if (activeUnreadCount > 0) return;
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [activeUnreadCount, activeChannelId, messages.length]);
+    if (!shouldAutoScrollRef.current && !isNearBottom()) return;
+    messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+  }, [activeUnreadCount, activeChannelId, isNearBottom, messages.length]);
 
   const loadOnboardingState = useCallback(async () => {
     if (!user?.id || !activeServerId) {
@@ -644,6 +668,7 @@ const ChatArea = () => {
   }, [activeServerId, loadOnboardingState, onboardingCustomChecks, onboardingCustomCompletedIds, onboardingStepStatus, user?.id]);
 
   useEffect(() => {
+    shouldAutoScrollRef.current = true;
     setShowThreadPanel(false);
     setThreadMessage(null);
   }, [activeChannelId]);
@@ -837,6 +862,34 @@ const ChatArea = () => {
     setShowPollModal(false);
   };
 
+  const handleCreateTopic = async () => {
+    if (!isForumChannelView) return;
+    if (checkingRulesAcceptance || onboardingBlocked) return;
+    if (timedOutActive || mutedActive || bannedActive) {
+      notifyRestriction();
+      return;
+    }
+    const title = topicTitle.trim();
+    const body = topicBody.trim();
+    if (!title) {
+      toast.error("Topic title is required.");
+      return;
+    }
+
+    const payload: ForumTopicDefinition = {
+      title,
+      body: body || title,
+    };
+
+    setCreatingTopic(true);
+    await sendMessage(encodeForumTopic(payload));
+    await markChannelAsRead(activeChannelId || undefined);
+    setCreatingTopic(false);
+    setTopicTitle("");
+    setTopicBody("");
+    setShowCreateTopicModal(false);
+  };
+
   const handleVotePoll = async (messageId: string, optionIndex: number, multipleChoice: boolean) => {
     if (!user) return;
     const current = pollVotesByMessage[messageId] || {};
@@ -966,6 +1019,29 @@ const ChatArea = () => {
     return Number.isNaN(ts) ? 0 : ts;
   }, []);
 
+  const getMessageBodyText = useCallback((msg: Message) => {
+    const parsed = parseMessageFeatures(msg.content);
+    if (parsed.kind === "poll") return parsed.poll.question;
+    if (parsed.kind === "forum_topic") return `${parsed.topic.title} ${parsed.topic.body}`.trim();
+    return parsed.text;
+  }, []);
+
+  const getForumTopic = useCallback((msg: Message): ForumTopicDefinition => {
+    const parsed = parseMessageFeatures(msg.content);
+    if (parsed.kind === "forum_topic") {
+      return {
+        title: parsed.topic.title,
+        body: parsed.topic.body,
+      };
+    }
+    const fallbackText = parsed.kind === "poll" ? parsed.poll.question : parsed.text;
+    const firstLine = fallbackText.split("\n").map((line) => line.trim()).find(Boolean) || "Untitled topic";
+    return {
+      title: firstLine.slice(0, 120),
+      body: fallbackText.trim() || firstLine,
+    };
+  }, []);
+
   const threadRepliesByParent = useMemo(() => {
     const map: Record<string, Message[]> = {};
     messages.forEach((m) => {
@@ -1001,12 +1077,12 @@ const ChatArea = () => {
           replyCount: replies.length,
           lastReplyAt,
           hasUnread: (threadUnreadCountByParent[parent.id] || 0) > 0,
-          searchText: `${parent.content} ${replies.map((reply) => reply.content).join(" ")}`.toLowerCase(),
+          searchText: `${getMessageBodyText(parent)} ${replies.map((reply) => getMessageBodyText(reply)).join(" ")}`.toLowerCase(),
         };
       })
       .filter((item): item is ThreadSummaryItem => !!item)
       .sort((a, b) => parseTs(b.lastReplyAt) - parseTs(a.lastReplyAt));
-  }, [messages, parseTs, threadRepliesByParent, threadUnreadCountByParent]);
+  }, [getMessageBodyText, messages, parseTs, threadRepliesByParent, threadUnreadCountByParent]);
 
   const markThreadAsSeen = useCallback((threadId: string, seenAt: string) => {
     setThreadReadAtByParent((prev) => {
@@ -1057,6 +1133,12 @@ const ChatArea = () => {
     if (parsed.kind === "announcement" || parsed.kind === "question") {
       return renderContentWithMentions(parsed.text, members);
     }
+    if (parsed.kind === "forum_topic") {
+      const topicText = parsed.topic.body && parsed.topic.body !== parsed.topic.title
+        ? `${parsed.topic.title}\n${parsed.topic.body}`
+        : parsed.topic.title;
+      return renderContentWithMentions(topicText, members);
+    }
     if (parsed.kind === "plain") {
       return renderContentWithMentions(parsed.text, members);
     }
@@ -1096,7 +1178,7 @@ const ChatArea = () => {
           })}
         </div>
         <p className="mt-2 text-[11px] text-muted-foreground">
-          {totalVotes} vote{totalVotes === 1 ? "" : "s"}{poll.multipleChoice ? " • Multiple choice" : ""}
+          {totalVotes} vote{totalVotes === 1 ? "" : "s"}{poll.multipleChoice ? " | Multiple choice" : ""}
         </p>
       </div>
     );
@@ -1104,6 +1186,10 @@ const ChatArea = () => {
 
   // Filter out thread replies from main view (show only top-level messages)
   const topLevelMessages = messages.filter((m) => !m.reply_to);
+  const forumTopics = useMemo(
+    () => [...topLevelMessages].sort((a, b) => parseTs(b.created_at) - parseTs(a.created_at)),
+    [parseTs, topLevelMessages],
+  );
   const firstUnreadTopLevelMessageId = useMemo(() => {
     if (activeUnreadCount <= 0) return null;
     if (topLevelMessages.length === 0) return null;
@@ -1119,15 +1205,10 @@ const ChatArea = () => {
     el?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [firstUnreadTopLevelMessageId]);
 
-  const isNearBottom = useCallback(() => {
-    const el = messagesContainerRef.current;
-    if (!el) return false;
-    return el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-  }, []);
-
   const handleMessagesScroll = useCallback(() => {
+    shouldAutoScrollRef.current = isNearBottom();
     if (!activeChannelId || activeUnreadCount === 0) return;
-    if (isNearBottom()) {
+    if (shouldAutoScrollRef.current) {
       void markChannelAsRead(activeChannelId);
     }
   }, [activeChannelId, activeUnreadCount, isNearBottom, markChannelAsRead]);
@@ -1187,6 +1268,11 @@ const ChatArea = () => {
       void markChannelAsRead(activeChannelId);
     }
   }, [activeChannelId, activeUnreadCount, isNearBottom, markChannelAsRead, messages.length]);
+
+  useEffect(() => {
+    if (!isForumChannelView || !activeChannelId || activeUnreadCount === 0) return;
+    void markChannelAsRead(activeChannelId);
+  }, [activeChannelId, activeUnreadCount, isForumChannelView, markChannelAsRead]);
 
   useEffect(() => {
     setMoveVoiceTargetByUser({});
@@ -1263,8 +1349,26 @@ const ChatArea = () => {
     return (
       <div className="flex flex-1 min-w-0 bg-chat-area">
         <div className="relative flex flex-col flex-1 min-w-0">
-          <div className="h-14 px-4 flex items-center justify-between border-b border-border/50 shrink-0 bg-gradient-to-r from-secondary/25 via-secondary/10 to-transparent">
+          <div className="h-14 px-2 sm:px-4 flex items-center justify-between border-b border-border/50 shrink-0 bg-gradient-to-r from-secondary/25 via-secondary/10 to-transparent">
             <div className="flex items-center gap-2.5 min-w-0">
+              {isMobile && (
+                <>
+                  <button
+                    onClick={onOpenServers}
+                    className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                    title="Open navigation"
+                  >
+                    <PanelLeft className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={onOpenChannels}
+                    className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                    title="Open channels"
+                  >
+                    <Menu className="w-4 h-4" />
+                  </button>
+                </>
+              )}
               <div className="w-8 h-8 rounded-lg bg-primary/15 border border-primary/30 flex items-center justify-center shrink-0">
                 <Volume2 className="w-4 h-4 text-primary" />
               </div>
@@ -1282,6 +1386,15 @@ const ChatArea = () => {
                 <span className="text-[11px] px-2 py-1 rounded-full border border-border bg-background/70 text-muted-foreground">
                   Live
                 </span>
+              )}
+              {isMobile && (
+                <button
+                  onClick={onOpenMembers}
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  title="Members"
+                >
+                  <Users className="w-4 h-4" />
+                </button>
               )}
             </div>
           </div>
@@ -1634,24 +1747,248 @@ const ChatArea = () => {
     );
   }
 
+  if (isForumChannelView) {
+    return (
+      <div className="flex flex-1 min-w-0">
+        <div className="flex flex-col flex-1 min-w-0 bg-chat-area">
+          <div className="h-12 px-2 sm:px-4 flex items-center justify-between border-b border-border/50 shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              {isMobile && (
+                <>
+                  <button
+                    onClick={onOpenServers}
+                    className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                    title="Open navigation"
+                  >
+                    <PanelLeft className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={onOpenChannels}
+                    className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                    title="Open channels"
+                  >
+                    <Menu className="w-4 h-4" />
+                  </button>
+                </>
+              )}
+              <MessageSquare className="w-5 h-5 text-muted-foreground" />
+              <span className="font-semibold text-foreground truncate">{channel?.name || "forum"}</span>
+            </div>
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+              <button
+                onClick={() => setShowSearch(true)}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+                title="Search"
+              >
+                <Search className="w-5 h-5" />
+              </button>
+              <button
+                onClick={() => {
+                  setShowThreadPanel(true);
+                  setThreadMessage(null);
+                }}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+                title="Topics with replies"
+              >
+                <Inbox className="w-5 h-5" />
+              </button>
+              <button
+                onClick={() => setShowCreateTopicModal(true)}
+                className="px-2 py-1 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:opacity-90"
+                title="Create topic"
+              >
+                New Topic
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {!activeChannelId && (
+              <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                <MessageSquare className="w-16 h-16 mb-4 opacity-30" />
+                <p className="text-lg font-semibold text-foreground">Select a forum channel</p>
+                <p className="text-sm">Pick a forum to browse long-running topics.</p>
+              </div>
+            )}
+
+            {activeChannelId && forumTopics.length === 0 && (
+              <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                <MessageSquare className="w-16 h-16 mb-4 opacity-30" />
+                <p className="text-lg font-semibold text-foreground">No topics yet</p>
+                <p className="text-sm">Start the first topic for this forum.</p>
+                <button
+                  onClick={() => setShowCreateTopicModal(true)}
+                  className="mt-4 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90"
+                >
+                  Create Topic
+                </button>
+              </div>
+            )}
+
+            {forumTopics.map((topicMessage) => {
+              const topic = getForumTopic(topicMessage);
+              const author = memberMap[topicMessage.user_id]?.display_name || "Unknown";
+              const replies = threadRepliesByParent[topicMessage.id] || [];
+              const unreadReplies = threadUnreadCountByParent[topicMessage.id] || 0;
+              const lastActivity = replies[replies.length - 1]?.created_at || topicMessage.created_at;
+              const bodyPreview = topic.body.length > 240 ? `${topic.body.slice(0, 240)}...` : topic.body;
+
+              return (
+                <div key={topicMessage.id} className="rounded-xl border border-border/60 bg-card/80 hover:border-primary/35 transition-colors p-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-base font-semibold text-foreground truncate">{topic.title}</p>
+                      <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                        <span>{author}</span>
+                        <span>|</span>
+                        <span>{formatTimestamp(topicMessage.created_at)}</span>
+                        <span>|</span>
+                        <span>Last activity {formatTimestamp(lastActivity)}</span>
+                      </div>
+                    </div>
+                    {topicMessage.pinned_at && <Pin className="w-4 h-4 text-primary shrink-0" />}
+                  </div>
+
+                  {bodyPreview && (
+                    <p className="mt-2 text-sm text-foreground whitespace-pre-wrap break-words leading-relaxed">
+                      {bodyPreview}
+                    </p>
+                  )}
+
+                  <div className="mt-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="px-2 py-0.5 rounded-md bg-secondary text-secondary-foreground">
+                        {replies.length} {replies.length === 1 ? "reply" : "replies"}
+                      </span>
+                      {unreadReplies > 0 && (
+                        <span className="px-2 py-0.5 rounded-md bg-primary/15 text-primary font-medium">
+                          {unreadReplies} unread
+                        </span>
+                      )}
+                      {topicMessage.attachment_url && (
+                        <span className="px-2 py-0.5 rounded-md bg-secondary text-secondary-foreground">Attachment</span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => openThread(topicMessage)}
+                      className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-chat-hover"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      Open Discussion
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <Dialog open={showCreateTopicModal} onOpenChange={setShowCreateTopicModal}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Create Topic</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3">
+                <input
+                  value={topicTitle}
+                  onChange={(e) => setTopicTitle(e.target.value)}
+                  placeholder="Topic title"
+                  className="w-full rounded-md bg-background border border-border px-3 py-2 text-sm"
+                />
+                <textarea
+                  value={topicBody}
+                  onChange={(e) => setTopicBody(e.target.value)}
+                  placeholder="Describe the topic (optional)"
+                  rows={5}
+                  className="w-full rounded-md bg-background border border-border px-3 py-2 text-sm resize-y"
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={() => setShowCreateTopicModal(false)}
+                    className="px-3 py-1.5 rounded-md bg-secondary text-secondary-foreground text-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => void handleCreateTopic()}
+                    disabled={creatingTopic || !topicTitle.trim()}
+                    className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm disabled:opacity-50"
+                  >
+                    {creatingTopic ? "Posting..." : "Post Topic"}
+                  </button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+          <SearchDialog open={showSearch} onClose={() => setShowSearch(false)} />
+          <PinnedMessagesPanel open={showPinned} onClose={() => setShowPinned(false)} members={memberMap} />
+        </div>
+
+        {showThreadPanel && (
+          isMobile ? (
+            <div className="fixed inset-0 z-50 bg-chat-area">
+              <ThreadPanel
+                parentMessage={threadMessage}
+                onClose={() => { setShowThreadPanel(false); setThreadMessage(null); }}
+                onOpenThread={openThread}
+                onBackToList={() => setThreadMessage(null)}
+                threadSummaries={threadSummaries}
+                onThreadSeen={markThreadAsSeen}
+                members={memberMap}
+                mobileFullscreen
+              />
+            </div>
+          ) : (
+            <ThreadPanel
+              parentMessage={threadMessage}
+              onClose={() => { setShowThreadPanel(false); setThreadMessage(null); }}
+              onOpenThread={openThread}
+              onBackToList={() => setThreadMessage(null)}
+              threadSummaries={threadSummaries}
+              onThreadSeen={markThreadAsSeen}
+              members={memberMap}
+            />
+          )
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-1 min-w-0">
       <div className="flex flex-col flex-1 min-w-0 bg-chat-area relative">
         {/* Header */}
-        <div className="h-12 px-4 flex items-center justify-between border-b border-border/50 shrink-0">
-          <div className="flex items-center gap-2">
+        <div className="h-12 px-2 sm:px-4 flex items-center justify-between border-b border-border/50 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            {isMobile && (
+              <>
+                <button
+                  onClick={onOpenServers}
+                  className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                  title="Open navigation"
+                >
+                  <PanelLeft className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={onOpenChannels}
+                  className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                  title="Open channels"
+                >
+                  <Menu className="w-4 h-4" />
+                </button>
+              </>
+            )}
             <Hash className="w-5 h-5 text-muted-foreground" />
-            <span className="font-semibold text-foreground">{channel?.name || "general"}</span>
+            <span className="font-semibold text-foreground truncate">{channel?.name || "general"}</span>
             {activeUnreadCount > 0 && firstUnreadTopLevelMessageId && (
               <button
                 onClick={jumpToFirstUnread}
-                className="ml-2 rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/20"
+                className="ml-1 sm:ml-2 rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/20 whitespace-nowrap"
               >
                 Jump to first unread ({activeUnreadCount})
               </button>
             )}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <button
               onClick={() => setShowEventsModal(true)}
               className="text-muted-foreground hover:text-foreground transition-colors"
@@ -1660,7 +1997,17 @@ const ChatArea = () => {
               <CalendarDays className="w-5 h-5" />
             </button>
             <button onClick={() => setShowPinned(true)} className="text-muted-foreground hover:text-foreground transition-colors" title="Pinned Messages"><Pin className="w-5 h-5" /></button>
-            <button className="text-muted-foreground hover:text-foreground transition-colors"><Users className="w-5 h-5" /></button>
+            <button
+              onClick={() => {
+                if (isMobile) {
+                  onOpenMembers?.();
+                }
+              }}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Members"
+            >
+              <Users className="w-5 h-5" />
+            </button>
             <button onClick={() => setShowSearch(true)} className="text-muted-foreground hover:text-foreground transition-colors"><Search className="w-5 h-5" /></button>
             <button
               onClick={() => { setShowThreadPanel(true); setThreadMessage(null); }}
@@ -1679,7 +2026,7 @@ const ChatArea = () => {
                 Q&A
               </button>
             )}
-            <button className="text-muted-foreground hover:text-foreground transition-colors"><HelpCircle className="w-5 h-5" /></button>
+            <button className={`${isMobile ? "hidden" : "inline-flex"} text-muted-foreground hover:text-foreground transition-colors`}><HelpCircle className="w-5 h-5" /></button>
           </div>
         </div>
 
@@ -2419,15 +2766,30 @@ const ChatArea = () => {
       </div>
 
       {showThreadPanel && (
-        <ThreadPanel
-          parentMessage={threadMessage}
-          onClose={() => { setShowThreadPanel(false); setThreadMessage(null); }}
-          onOpenThread={openThread}
-          onBackToList={() => setThreadMessage(null)}
-          threadSummaries={threadSummaries}
-          onThreadSeen={markThreadAsSeen}
-          members={memberMap}
-        />
+        isMobile ? (
+          <div className="fixed inset-0 z-50 bg-chat-area">
+            <ThreadPanel
+              parentMessage={threadMessage}
+              onClose={() => { setShowThreadPanel(false); setThreadMessage(null); }}
+              onOpenThread={openThread}
+              onBackToList={() => setThreadMessage(null)}
+              threadSummaries={threadSummaries}
+              onThreadSeen={markThreadAsSeen}
+              members={memberMap}
+              mobileFullscreen
+            />
+          </div>
+        ) : (
+          <ThreadPanel
+            parentMessage={threadMessage}
+            onClose={() => { setShowThreadPanel(false); setThreadMessage(null); }}
+            onOpenThread={openThread}
+            onBackToList={() => setThreadMessage(null)}
+            threadSummaries={threadSummaries}
+            onThreadSeen={markThreadAsSeen}
+            members={memberMap}
+          />
+        )
       )}
       {profileUser && (
         <UserProfileCard

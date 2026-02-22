@@ -53,7 +53,7 @@ const MemberItem = ({
   );
 };
 
-const MemberSidebar = () => {
+const MemberSidebar = ({ forceVisible = false }: { forceVisible?: boolean }) => {
   const { members, activeServerId } = useChatContext();
   const [profileUser, setProfileUser] = useState<typeof members[0] | null>(null);
   const [profilePos, setProfilePos] = useState<{ top: number; left: number } | undefined>();
@@ -85,7 +85,7 @@ const MemberSidebar = () => {
   };
 
   return (
-    <div className="w-60 bg-member-bar shrink-0 overflow-y-auto hidden lg:block">
+    <div className={`${forceVisible ? "w-full h-full block" : "w-60 hidden lg:block"} bg-member-bar shrink-0 overflow-y-auto`}>
       <div className="px-4 py-4 space-y-4">
         {orderedRoleGroups.map(([roleName, roleMembers]) => {
           const sortedMembers = [...roleMembers].sort((a, b) => a.display_name.localeCompare(b.display_name));
