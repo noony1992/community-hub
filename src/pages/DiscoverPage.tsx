@@ -8,6 +8,7 @@ import ServerSidebar from "@/components/chat/ServerSidebar";
 import BanAppealDialog from "@/components/chat/BanAppealDialog";
 import BottomLeftDock from "@/components/chat/BottomLeftDock";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useLoadingReveal } from "@/hooks/useLoadingReveal";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { DiscoverGridSkeleton } from "@/components/skeletons/AppSkeletons";
 
@@ -31,6 +32,7 @@ const DiscoverPage = () => {
   const [banAppealOpen, setBanAppealOpen] = useState(false);
   const isMobile = useIsMobile();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const revealDiscoverResults = useLoadingReveal(loading);
 
   const joinedIds = useMemo(() => new Set(joinedServers.map((s) => s.id)), [joinedServers]);
 
@@ -127,12 +129,12 @@ const DiscoverPage = () => {
           {loading && <DiscoverGridSkeleton />}
 
           {!loading && results.length === 0 && (
-            <div className="text-sm text-muted-foreground bg-secondary/40 rounded-md p-4 border border-border/60">
+            <div className={`text-sm text-muted-foreground bg-secondary/40 rounded-md p-4 border border-border/60 ${revealDiscoverResults ? "animate-in fade-in-0 duration-200 ease-out" : ""}`}>
               No discoverable servers found.
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 ${!loading && revealDiscoverResults ? "animate-in fade-in-0 duration-200 ease-out" : ""}`}>
             {results.map((server) => {
               const joined = joinedIds.has(server.id);
               return (

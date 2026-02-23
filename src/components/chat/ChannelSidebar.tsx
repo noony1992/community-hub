@@ -24,6 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ChannelSidebarSkeleton } from "@/components/skeletons/AppSkeletons";
+import { useLoadingReveal } from "@/hooks/useLoadingReveal";
 
 type ChannelSidebarProps = {
   embedded?: boolean;
@@ -46,6 +47,8 @@ const ChannelSidebar = ({ embedded = false, onNavigate }: ChannelSidebarProps) =
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [pendingVoiceSwitchChannelId, setPendingVoiceSwitchChannelId] = useState<string | null>(null);
   const [switchingVoiceChannel, setSwitchingVoiceChannel] = useState(false);
+  const showingSkeleton = !!activeServerId && loadingChannels;
+  const revealChannels = useLoadingReveal(showingSkeleton);
 
   const textChannels = channels.filter((c) => c.type === "text");
   const forumChannels = channels.filter((c) => c.type === "forum");
@@ -70,7 +73,7 @@ const ChannelSidebar = ({ embedded = false, onNavigate }: ChannelSidebarProps) =
   const currentMember = members.find((m) => m.id === user?.id);
   const canManageChannels = isOwner || (currentMember?.role_permissions || []).includes("manage_channels");
 
-  if (activeServerId && loadingChannels) {
+  if (showingSkeleton) {
     return <ChannelSidebarSkeleton embedded={embedded} />;
   }
 
@@ -124,7 +127,11 @@ const ChannelSidebar = ({ embedded = false, onNavigate }: ChannelSidebarProps) =
   };
 
   return (
-    <div className={`flex flex-col bg-channel-bar shrink-0 ${embedded ? "w-full h-full" : "w-60"}`}>
+    <div
+      className={`flex flex-col bg-channel-bar shrink-0 ${embedded ? "w-full h-full" : "w-60"} ${
+        revealChannels ? "animate-in fade-in-0 duration-200 ease-out" : ""
+      }`}
+    >
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button className="w-full border-b border-border/50 transition-colors">

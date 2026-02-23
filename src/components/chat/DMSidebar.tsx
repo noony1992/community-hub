@@ -8,6 +8,7 @@ import { getEffectiveStatus } from "@/lib/presence";
 import BottomLeftDock from "./BottomLeftDock";
 import { DMSidebarSkeleton } from "@/components/skeletons/AppSkeletons";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useLoadingReveal } from "@/hooks/useLoadingReveal";
 
 type DMSidebarProps = {
   embedded?: boolean;
@@ -28,8 +29,10 @@ const DMSidebar = ({ embedded = false, onNavigate }: DMSidebarProps) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
+  const showingSkeleton = loadingConversations && conversations.length === 0 && !searchQuery;
+  const revealConversations = useLoadingReveal(showingSkeleton);
 
-  if (loadingConversations && conversations.length === 0 && !searchQuery) {
+  if (showingSkeleton) {
     return <DMSidebarSkeleton embedded={embedded} />;
   }
 
@@ -59,7 +62,11 @@ const DMSidebar = ({ embedded = false, onNavigate }: DMSidebarProps) => {
   };
 
   return (
-    <div className={`flex flex-col bg-channel-bar shrink-0 ${embedded ? "w-full h-full" : "w-60"}`}>
+    <div
+      className={`flex flex-col bg-channel-bar shrink-0 ${embedded ? "w-full h-full" : "w-60"} ${
+        revealConversations ? "animate-in fade-in-0 duration-200 ease-out" : ""
+      }`}
+    >
       <div className="h-12 px-4 flex items-center border-b border-border/50">
         <span className="font-semibold text-foreground">Direct Messages</span>
       </div>
@@ -90,9 +97,12 @@ const DMSidebar = ({ embedded = false, onNavigate }: DMSidebarProps) => {
                   <div key={i} className="space-y-2 px-1 py-2">
                     <div className="flex items-center gap-3">
                     <Skeleton className="h-9 w-9 rounded-full shrink-0" />
-                    <div className="space-y-2 flex-1">
-                      <Skeleton className="h-3.5 w-20" />
-                      <Skeleton className="h-3 w-14" />
+                    <div className="space-y-2 flex-1 min-w-0">
+                      <div className="flex items-center gap-2.5">
+                        <Skeleton className="h-3.5 w-14" />
+                        {i % 2 === 0 && <Skeleton className="h-3.5 w-10" />}
+                      </div>
+                      <Skeleton className="h-3 w-11" />
                     </div>
                     </div>
                     {i === 1 && (

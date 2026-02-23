@@ -9,6 +9,7 @@ import EmojiPicker from "./EmojiPicker";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useLoadingReveal } from "@/hooks/useLoadingReveal";
 
 export interface ThreadSummaryItem {
   parentMessage: Message;
@@ -107,6 +108,7 @@ const ThreadPanel = ({
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const revealReplies = useLoadingReveal(loading);
   const parentCardRef = useRef<HTMLDivElement>(null);
   const threadScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -462,8 +464,17 @@ const ThreadPanel = ({
                     <Skeleton className="h-3 w-20" />
                     <Skeleton className="h-2.5 w-10" />
                   </div>
-                  <Skeleton className="h-3.5" style={{ width: `${42 + (i * 11) % 26}%` }} />
-                  <Skeleton className="h-3.5" style={{ width: `${34 + (i * 9) % 28}%` }} />
+                  <div className="flex items-center gap-2.5">
+                    <Skeleton className="h-3.5" style={{ width: `${20 + (i * 8) % 14}%` }} />
+                    {i % 2 === 0 && <Skeleton className="h-3.5" style={{ width: `${12 + (i * 6) % 10}%` }} />}
+                  </div>
+                  <Skeleton className="h-3.5" style={{ width: `${28 + (i * 8) % 16}%` }} />
+                  {i % 2 === 1 && (
+                    <div className="flex items-center gap-2.5">
+                      <Skeleton className="h-3" style={{ width: `${16 + (i * 6) % 12}%` }} />
+                      <Skeleton className="h-3" style={{ width: `${11 + (i * 5) % 9}%` }} />
+                    </div>
+                  )}
                   {i === 2 && <Skeleton className="h-20 w-40 rounded-md" />}
                 </div>
               </div>
@@ -475,100 +486,104 @@ const ThreadPanel = ({
           {loading ? "Loading replies..." : `${replies.length} ${replies.length === 1 ? "reply" : "replies"}`}
         </div>
 
-        {!loading && replies.length === 0 && (
-          <div className="rounded-lg border border-dashed border-border/70 bg-secondary/20 p-4 text-center">
-            <p className="text-sm text-foreground">No replies yet</p>
-            <p className="text-xs text-muted-foreground mt-1">Start the conversation below.</p>
+        {!loading && (
+          <div className={revealReplies ? "animate-in fade-in-0 duration-200 ease-out" : ""}>
+            {replies.length === 0 && (
+              <div className="rounded-lg border border-dashed border-border/70 bg-secondary/20 p-4 text-center">
+                <p className="text-sm text-foreground">No replies yet</p>
+                <p className="text-xs text-muted-foreground mt-1">Start the conversation below.</p>
+              </div>
+            )}
+
+            {replies.map((msg, i) => {
+              const prevMsg = replies[i - 1];
+              const showDateDivider = !prevMsg || !isSameDay(new Date(msg.created_at), new Date(prevMsg.created_at));
+              const commentReplyMeta = parseCommentReplyMeta(msg.content);
+              const messageBody = getDisplayText(msg.content);
+              const authorName = getAuthorName(msg.user_id);
+
+              return (
+                <Fragment key={msg.id}>
+                  {showDateDivider && (
+                    <div className="flex items-center gap-3 py-1">
+                      <div className="h-px flex-1 bg-border/70" />
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        {formatDateDividerLabel(msg.created_at)}
+                      </span>
+                      <div className="h-px flex-1 bg-border/70" />
+                    </div>
+                  )}
+                  <div
+                    ref={(node) => {
+                      replyRefs.current[msg.id] = node;
+                    }}
+                    className={cn(
+                      "flex gap-2 rounded-lg border border-transparent p-2 transition-colors",
+                      highlightedMessageId === msg.id ? "bg-primary/10 border-primary/40" : "hover:bg-chat-hover/70",
+                    )}
+                  >
+                    <div
+                      className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0 text-foreground"
+                      style={{ backgroundColor: `hsl(${(msg.user_id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}
+                    >
+                      {authorName.slice(0, 2).toUpperCase()}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <div className="min-w-0 flex items-baseline gap-1.5">
+                          <span className="text-xs font-semibold text-foreground truncate">{authorName}</span>
+                          <span className="text-[10px] text-muted-foreground shrink-0">{format(new Date(msg.created_at), "h:mm a")}</span>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setReplyToComment(msg);
+                            requestAnimationFrame(() => inputRef.current?.focus());
+                          }}
+                          className="text-[11px] text-muted-foreground hover:text-primary shrink-0 inline-flex items-center gap-1"
+                          title="Reply to comment"
+                        >
+                          <Reply className="w-3 h-3" />
+                          Reply
+                        </button>
+                      </div>
+                      {commentReplyMeta && (
+                        <button
+                          onClick={() => jumpToComment(commentReplyMeta.targetId)}
+                          className="mt-1.5 w-full text-left rounded-md border border-border/70 bg-secondary/30 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
+                          title={`Jump to ${commentReplyMeta.targetAuthor}`}
+                        >
+                          <span className="font-medium text-foreground">Replying to {commentReplyMeta.targetAuthor}</span>
+                          {commentReplyMeta.targetExcerpt ? `: ${commentReplyMeta.targetExcerpt}` : ""}
+                        </button>
+                      )}
+                      <p className="text-sm text-foreground whitespace-pre-wrap break-words mt-1">{messageBody}</p>
+                      {msg.attachment_url && (
+                        <a
+                          href={msg.attachment_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-2 block rounded-md border border-border/60 bg-secondary/30 p-2 hover:bg-secondary/50 transition-colors"
+                        >
+                          {msg.attachment_type?.startsWith("image/") ? (
+                            <img
+                              src={msg.attachment_url}
+                              alt={msg.attachment_name || "Attachment"}
+                              className="max-h-48 rounded-md object-cover mb-1"
+                            />
+                          ) : null}
+                          <div className="flex items-center gap-2 text-xs text-foreground">
+                            {msg.attachment_type?.startsWith("image/") ? <ImageIcon className="w-3.5 h-3.5 text-primary" /> : <FileIcon className="w-3.5 h-3.5 text-primary" />}
+                            <span className="truncate">{msg.attachment_name || "Attachment"}</span>
+                          </div>
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </Fragment>
+              );
+            })}
           </div>
         )}
-
-        {!loading && replies.map((msg, i) => {
-          const prevMsg = replies[i - 1];
-          const showDateDivider = !prevMsg || !isSameDay(new Date(msg.created_at), new Date(prevMsg.created_at));
-          const commentReplyMeta = parseCommentReplyMeta(msg.content);
-          const messageBody = getDisplayText(msg.content);
-          const authorName = getAuthorName(msg.user_id);
-
-          return (
-            <Fragment key={msg.id}>
-              {showDateDivider && (
-                <div className="flex items-center gap-3 py-1">
-                  <div className="h-px flex-1 bg-border/70" />
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    {formatDateDividerLabel(msg.created_at)}
-                  </span>
-                  <div className="h-px flex-1 bg-border/70" />
-                </div>
-              )}
-              <div
-                ref={(node) => {
-                  replyRefs.current[msg.id] = node;
-                }}
-                className={cn(
-                  "flex gap-2 rounded-lg border border-transparent p-2 transition-colors",
-                  highlightedMessageId === msg.id ? "bg-primary/10 border-primary/40" : "hover:bg-chat-hover/70",
-                )}
-              >
-                <div
-                  className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0 text-foreground"
-                  style={{ backgroundColor: `hsl(${(msg.user_id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}
-                >
-                  {authorName.slice(0, 2).toUpperCase()}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <div className="min-w-0 flex items-baseline gap-1.5">
-                      <span className="text-xs font-semibold text-foreground truncate">{authorName}</span>
-                      <span className="text-[10px] text-muted-foreground shrink-0">{format(new Date(msg.created_at), "h:mm a")}</span>
-                    </div>
-                    <button
-                      onClick={() => {
-                        setReplyToComment(msg);
-                        requestAnimationFrame(() => inputRef.current?.focus());
-                      }}
-                      className="text-[11px] text-muted-foreground hover:text-primary shrink-0 inline-flex items-center gap-1"
-                      title="Reply to comment"
-                    >
-                      <Reply className="w-3 h-3" />
-                      Reply
-                    </button>
-                  </div>
-                  {commentReplyMeta && (
-                    <button
-                      onClick={() => jumpToComment(commentReplyMeta.targetId)}
-                      className="mt-1.5 w-full text-left rounded-md border border-border/70 bg-secondary/30 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
-                      title={`Jump to ${commentReplyMeta.targetAuthor}`}
-                    >
-                      <span className="font-medium text-foreground">Replying to {commentReplyMeta.targetAuthor}</span>
-                      {commentReplyMeta.targetExcerpt ? `: ${commentReplyMeta.targetExcerpt}` : ""}
-                    </button>
-                  )}
-                  <p className="text-sm text-foreground whitespace-pre-wrap break-words mt-1">{messageBody}</p>
-                  {msg.attachment_url && (
-                    <a
-                      href={msg.attachment_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-2 block rounded-md border border-border/60 bg-secondary/30 p-2 hover:bg-secondary/50 transition-colors"
-                    >
-                      {msg.attachment_type?.startsWith("image/") ? (
-                        <img
-                          src={msg.attachment_url}
-                          alt={msg.attachment_name || "Attachment"}
-                          className="max-h-48 rounded-md object-cover mb-1"
-                        />
-                      ) : null}
-                      <div className="flex items-center gap-2 text-xs text-foreground">
-                        {msg.attachment_type?.startsWith("image/") ? <ImageIcon className="w-3.5 h-3.5 text-primary" /> : <FileIcon className="w-3.5 h-3.5 text-primary" />}
-                        <span className="truncate">{msg.attachment_name || "Attachment"}</span>
-                      </div>
-                    </a>
-                  )}
-                </div>
-              </div>
-            </Fragment>
-          );
-        })}
         <div ref={endRef} />
       </div>
 

@@ -9,6 +9,7 @@ import StatusIndicator from "./StatusIndicator";
 import { getEffectiveStatus } from "@/lib/presence";
 import { DMAreaSkeleton } from "@/components/skeletons/AppSkeletons";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useLoadingReveal } from "@/hooks/useLoadingReveal";
 
 interface FriendItem {
   id: string;
@@ -33,11 +34,15 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
   const [friends, setFriends] = useState<FriendItem[]>([]);
   const [loadingFriends, setLoadingFriends] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const showingInitialSkeleton = !isFriendsView && loadingConversations && conversations.length === 0 && !activeConversationId;
+  const revealInitial = useLoadingReveal(showingInitialSkeleton);
+  const revealFriends = useLoadingReveal(loadingFriends);
+  const revealMessages = useLoadingReveal(!!activeConversationId && loadingDmMessages);
 
   const conversation = conversations.find((c) => c.id === activeConversationId);
   const participant = conversation?.participant;
 
-  if (!isFriendsView && loadingConversations && conversations.length === 0 && !activeConversationId) {
+  if (showingInitialSkeleton) {
     return <DMAreaSkeleton />;
   }
 
@@ -127,7 +132,7 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
   };
 
   return (
-    <div className="flex flex-col flex-1 min-w-0 bg-chat-area">
+    <div className={`flex flex-col flex-1 min-w-0 bg-chat-area ${revealInitial ? "animate-in fade-in-0 duration-200 ease-out" : ""}`}>
       {/* Header */}
       <div className="h-12 px-3 sm:px-4 flex items-center gap-2 border-b border-border/50 shrink-0">
         {isMobile && (
@@ -159,16 +164,19 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
         {isFriendsView && (
-          <div className="space-y-2">
+          <div className={`space-y-2 ${!loadingFriends && revealFriends ? "animate-in fade-in-0 duration-200 ease-out" : ""}`}>
             {loadingFriends && (
               <div className="space-y-3">
                 {Array.from({ length: 6 }).map((_, i) => (
                   <div key={i} className="flex items-center justify-between gap-4 px-1 py-2">
                     <div className="flex items-center gap-3 min-w-0 flex-1">
                       <Skeleton className="h-9 w-9 rounded-full shrink-0" />
-                      <div className="space-y-2 flex-1">
-                        <Skeleton className="h-3.5 w-24" />
-                        <Skeleton className="h-3 w-16" />
+                      <div className="space-y-2 flex-1 min-w-0">
+                        <div className="flex items-center gap-2.5">
+                          <Skeleton className="h-3.5 w-16" />
+                          {i % 2 === 0 && <Skeleton className="h-3.5 w-10" />}
+                        </div>
+                        <Skeleton className="h-3 w-12" />
                       </div>
                     </div>
                     <Skeleton className="h-8 w-10 rounded-md" />
@@ -219,103 +227,113 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
         )}
         {!isFriendsView && (
           <>
-        {activeConversationId && loadingDmMessages && (
-          <div className="space-y-4">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="flex gap-4 items-start">
-                <Skeleton className="h-10 w-10 rounded-full shrink-0" />
-                <div className="flex-1 space-y-2.5">
-                  <Skeleton className="h-3.5 w-28" />
-                  <Skeleton className="h-3.5 w-2/5" />
-                  {i % 4 === 1 && (
-                    <Skeleton
-                      className="rounded-md"
-                      style={{ width: 176 + ((i * 17) % 44), height: 98 + ((i * 13) % 30) }}
-                    />
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-        {!activeConversationId && (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-            <AtSign className="w-16 h-16 mb-4 opacity-30" />
-            <p className="text-lg font-semibold text-foreground">Select a conversation</p>
-            <p className="text-sm">Pick a conversation or start a new one</p>
-          </div>
-        )}
-        {activeConversationId && !loadingDmMessages && dmMessages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-            <AtSign className="w-16 h-16 mb-4 opacity-30" />
-            <p className="text-lg font-semibold text-foreground">Start of your conversation with {participant?.display_name}</p>
-            <p className="text-sm">Send a message to begin!</p>
-          </div>
-        )}
-        {!loadingDmMessages && dmMessages.map((msg, i) => {
-          const sender = profileMap[msg.user_id];
-          const prevMsg = dmMessages[i - 1];
-          const showDateDivider = !prevMsg || !isSameDay(new Date(msg.created_at), new Date(prevMsg.created_at));
-          const isGrouped = prevMsg?.user_id === msg.user_id &&
-            !showDateDivider &&
-            new Date(msg.created_at).getTime() - new Date(prevMsg.created_at).getTime() < 300000;
-
-          const displayName = sender?.display_name || "Unknown";
-          const initials = displayName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
-
-          if (isGrouped) {
-            return (
-              <Fragment key={msg.id}>
-                <div className="pl-[52px] py-0.5 hover:bg-chat-hover rounded group relative">
-                  <span className="text-[11px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity absolute -ml-[38px] mt-0.5">
-                    {format(new Date(msg.created_at), "h:mm a")}
-                  </span>
-                  <p className="text-sm text-foreground">
-                    {msg.content}
-                    {msg.client_status === "pending" && <span className="text-[10px] text-muted-foreground ml-1">(sending)</span>}
-                    {msg.client_status === "retrying" && <span className="text-[10px] text-amber-600 ml-1">(retrying)</span>}
-                    {msg.client_status === "failed" && <span className="text-[10px] text-destructive ml-1">(failed)</span>}
-                  </p>
-                </div>
-              </Fragment>
-            );
-          }
-
-          return (
-            <Fragment key={msg.id}>
-              {showDateDivider && (
-                <div className="flex items-center gap-3 py-2">
-                  <div className="h-px flex-1 bg-border/70" />
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    {formatDateDividerLabel(msg.created_at)}
-                  </span>
-                  <div className="h-px flex-1 bg-border/70" />
-                </div>
-              )}
-              <div className={`flex gap-3 py-1 hover:bg-chat-hover rounded px-1 group ${i > 0 ? "mt-3" : ""}`}>
-                <div
-                  className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 mt-0.5 text-foreground"
-                  style={{ backgroundColor: `hsl(${(msg.user_id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}
-                >
-                  {initials}
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-sm font-semibold text-foreground">{displayName}</span>
-                    <span className="text-[11px] text-muted-foreground">{formatTimestamp(msg.created_at)}</span>
+            {activeConversationId && loadingDmMessages && (
+              <div className="space-y-4">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} className="flex gap-4 items-start">
+                    <Skeleton className="h-10 w-10 rounded-full shrink-0" />
+                    <div className="flex-1 space-y-2.5 min-w-0">
+                      <div className="flex items-center gap-2.5">
+                        <Skeleton className="h-3.5 w-16" />
+                        {i % 2 === 1 && <Skeleton className="h-3.5 w-10" />}
+                      </div>
+                      <div className="flex items-center gap-2.5">
+                        <Skeleton className="h-3.5 w-24" />
+                        {i % 3 === 0 && <Skeleton className="h-3.5 w-12" />}
+                      </div>
+                      {i % 4 === 1 && (
+                        <Skeleton
+                          className="rounded-md"
+                          style={{ width: 176 + ((i * 17) % 44), height: 98 + ((i * 13) % 30) }}
+                        />
+                      )}
+                    </div>
                   </div>
-                  <p className="text-sm text-foreground">
-                    {msg.content}
-                    {msg.client_status === "pending" && <span className="text-[10px] text-muted-foreground ml-1">(sending)</span>}
-                    {msg.client_status === "retrying" && <span className="text-[10px] text-amber-600 ml-1">(retrying)</span>}
-                    {msg.client_status === "failed" && <span className="text-[10px] text-destructive ml-1">(failed)</span>}
-                  </p>
-                </div>
+                ))}
               </div>
-            </Fragment>
-          );
-        })}
-        <div ref={messagesEndRef} />
+            )}
+            {!loadingDmMessages && (
+              <div className={revealMessages ? "animate-in fade-in-0 duration-200 ease-out" : ""}>
+                {!activeConversationId && (
+                  <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                    <AtSign className="w-16 h-16 mb-4 opacity-30" />
+                    <p className="text-lg font-semibold text-foreground">Select a conversation</p>
+                    <p className="text-sm">Pick a conversation or start a new one</p>
+                  </div>
+                )}
+                {activeConversationId && dmMessages.length === 0 && (
+                  <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                    <AtSign className="w-16 h-16 mb-4 opacity-30" />
+                    <p className="text-lg font-semibold text-foreground">Start of your conversation with {participant?.display_name}</p>
+                    <p className="text-sm">Send a message to begin!</p>
+                  </div>
+                )}
+                {dmMessages.map((msg, i) => {
+                  const sender = profileMap[msg.user_id];
+                  const prevMsg = dmMessages[i - 1];
+                  const showDateDivider = !prevMsg || !isSameDay(new Date(msg.created_at), new Date(prevMsg.created_at));
+                  const isGrouped = prevMsg?.user_id === msg.user_id &&
+                    !showDateDivider &&
+                    new Date(msg.created_at).getTime() - new Date(prevMsg.created_at).getTime() < 300000;
+
+                  const displayName = sender?.display_name || "Unknown";
+                  const initials = displayName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
+
+                  if (isGrouped) {
+                    return (
+                      <Fragment key={msg.id}>
+                        <div className="pl-[52px] py-0.5 hover:bg-chat-hover rounded group relative">
+                          <span className="text-[11px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity absolute -ml-[38px] mt-0.5">
+                            {format(new Date(msg.created_at), "h:mm a")}
+                          </span>
+                          <p className="text-sm text-foreground">
+                            {msg.content}
+                            {msg.client_status === "pending" && <span className="text-[10px] text-muted-foreground ml-1">(sending)</span>}
+                            {msg.client_status === "retrying" && <span className="text-[10px] text-amber-600 ml-1">(retrying)</span>}
+                            {msg.client_status === "failed" && <span className="text-[10px] text-destructive ml-1">(failed)</span>}
+                          </p>
+                        </div>
+                      </Fragment>
+                    );
+                  }
+
+                  return (
+                    <Fragment key={msg.id}>
+                      {showDateDivider && (
+                        <div className="flex items-center gap-3 py-2">
+                          <div className="h-px flex-1 bg-border/70" />
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            {formatDateDividerLabel(msg.created_at)}
+                          </span>
+                          <div className="h-px flex-1 bg-border/70" />
+                        </div>
+                      )}
+                      <div className={`flex gap-3 py-1 hover:bg-chat-hover rounded px-1 group ${i > 0 ? "mt-3" : ""}`}>
+                        <div
+                          className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 mt-0.5 text-foreground"
+                          style={{ backgroundColor: `hsl(${(msg.user_id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}
+                        >
+                          {initials}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-sm font-semibold text-foreground">{displayName}</span>
+                            <span className="text-[11px] text-muted-foreground">{formatTimestamp(msg.created_at)}</span>
+                          </div>
+                          <p className="text-sm text-foreground">
+                            {msg.content}
+                            {msg.client_status === "pending" && <span className="text-[10px] text-muted-foreground ml-1">(sending)</span>}
+                            {msg.client_status === "retrying" && <span className="text-[10px] text-amber-600 ml-1">(retrying)</span>}
+                            {msg.client_status === "failed" && <span className="text-[10px] text-destructive ml-1">(failed)</span>}
+                          </p>
+                        </div>
+                      </div>
+                    </Fragment>
+                  );
+                })}
+              </div>
+            )}
+            <div ref={messagesEndRef} />
           </>
         )}
       </div>

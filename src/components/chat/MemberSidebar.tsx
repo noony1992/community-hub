@@ -3,6 +3,7 @@ import { useChatContext } from "@/context/ChatContext";
 import StatusIndicator from "./StatusIndicator";
 import UserProfileCard from "./UserProfileCard";
 import { MemberSidebarSkeleton } from "@/components/skeletons/AppSkeletons";
+import { useLoadingReveal } from "@/hooks/useLoadingReveal";
 
 type SidebarMember = {
   id: string;
@@ -58,8 +59,10 @@ const MemberSidebar = ({ forceVisible = false }: { forceVisible?: boolean }) => 
   const { members, activeServerId, loadingMembers } = useChatContext();
   const [profileUser, setProfileUser] = useState<typeof members[0] | null>(null);
   const [profilePos, setProfilePos] = useState<{ top: number; left: number } | undefined>();
+  const showingSkeleton = !!activeServerId && loadingMembers;
+  const revealMembers = useLoadingReveal(showingSkeleton);
 
-  if (activeServerId && loadingMembers) {
+  if (showingSkeleton) {
     return <MemberSidebarSkeleton forceVisible={forceVisible} />;
   }
 
@@ -90,7 +93,11 @@ const MemberSidebar = ({ forceVisible = false }: { forceVisible?: boolean }) => 
   };
 
   return (
-    <div className={`${forceVisible ? "w-full h-full block" : "w-60 hidden lg:block"} bg-member-bar shrink-0 overflow-y-auto`}>
+    <div
+      className={`${forceVisible ? "w-full h-full block" : "w-60 hidden lg:block"} bg-member-bar shrink-0 overflow-y-auto ${
+        revealMembers ? "animate-in fade-in-0 duration-200 ease-out" : ""
+      }`}
+    >
       <div className="px-4 py-4 space-y-4">
         {orderedRoleGroups.map(([roleName, roleMembers]) => {
           const sortedMembers = [...roleMembers].sort((a, b) => a.display_name.localeCompare(b.display_name));

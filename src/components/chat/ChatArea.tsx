@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { encodeForumTopic, encodePoll, encodeQuestion, parseMessageFeatures, type ForumTopicDefinition, type PollDefinition } from "@/lib/messageFeatures";
 import { useSearchParams } from "react-router-dom";
 import { ChatAreaSkeleton } from "@/components/skeletons/AppSkeletons";
+import { useLoadingReveal } from "@/hooks/useLoadingReveal";
 
 type ServerEvent = {
   id: string;
@@ -260,6 +261,9 @@ const ChatArea = ({
       items: items.sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime()),
     }));
   }, [events]);
+  const loadingMainContent = !!(activeServerId && (loadingChannels || (activeChannelId && loadingMessages)));
+  const revealMainContent = useLoadingReveal(loadingMainContent);
+  const revealEvents = useLoadingReveal(loadingEvents);
 
   const loadEvents = useCallback(async () => {
     if (!activeServerId || !user) return;
@@ -1300,7 +1304,7 @@ const ChatArea = ({
     setActiveChannel(activeVoiceChannelId);
   }, [activeChannelId, activeVoiceChannelId, channels, setActiveChannel]);
 
-  if (activeServerId && (loadingChannels || (activeChannelId && loadingMessages))) {
+  if (loadingMainContent) {
     return <ChatAreaSkeleton forum={isForumChannelView} />;
   }
 
@@ -1353,7 +1357,7 @@ const ChatArea = ({
     const voiceCompactCardHeightClass = "h-[120px]";
 
     return (
-      <div className="flex flex-1 min-w-0 bg-chat-area">
+      <div className={`flex flex-1 min-w-0 bg-chat-area ${revealMainContent ? "animate-in fade-in-0 duration-200 ease-out" : ""}`}>
         <div className="relative flex flex-col flex-1 min-w-0">
           <div className="h-14 px-2 sm:px-4 flex items-center justify-between border-b border-border/50 shrink-0 bg-gradient-to-r from-secondary/25 via-secondary/10 to-transparent">
             <div className="flex items-center gap-2.5 min-w-0">
@@ -1756,7 +1760,7 @@ const ChatArea = ({
   if (isForumChannelView) {
     return (
       <div className="flex flex-1 min-w-0">
-        <div className="flex flex-col flex-1 min-w-0 bg-chat-area">
+        <div className={`flex flex-col flex-1 min-w-0 bg-chat-area ${revealMainContent ? "animate-in fade-in-0 duration-200 ease-out" : ""}`}>
           <div className="h-12 px-2 sm:px-4 flex items-center justify-between border-b border-border/50 shrink-0">
             <div className="flex items-center gap-2 min-w-0">
               {isMobile && (
@@ -1962,7 +1966,7 @@ const ChatArea = ({
 
   return (
     <div className="flex flex-1 min-w-0">
-      <div className="flex flex-col flex-1 min-w-0 bg-chat-area relative">
+      <div className={`flex flex-col flex-1 min-w-0 bg-chat-area relative ${revealMainContent ? "animate-in fade-in-0 duration-200 ease-out" : ""}`}>
         {/* Header */}
         <div className="h-12 px-2 sm:px-4 flex items-center justify-between border-b border-border/50 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
@@ -2670,15 +2674,21 @@ const ChatArea = ({
                       <div key={i} className="rounded-xl border border-border/60 bg-background/70 p-3 space-y-3">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex-1 space-y-2">
-                            <Skeleton className="h-4" style={{ width: `${30 + (i * 8) % 20}%` }} />
-                            <Skeleton className="h-3.5" style={{ width: `${50 + (i * 7) % 24}%` }} />
-                            <Skeleton className="h-3.5" style={{ width: `${26 + (i * 9) % 18}%` }} />
+                            <div className="flex items-center gap-2.5">
+                              <Skeleton className="h-4" style={{ width: `${20 + (i * 7) % 14}%` }} />
+                              {i % 2 === 0 && <Skeleton className="h-4" style={{ width: `${12 + (i * 5) % 9}%` }} />}
+                            </div>
+                            <Skeleton className="h-3.5" style={{ width: `${30 + (i * 7) % 16}%` }} />
+                            <div className="flex items-center gap-2.5">
+                              <Skeleton className="h-3.5" style={{ width: `${18 + (i * 6) % 13}%` }} />
+                              <Skeleton className="h-3.5" style={{ width: `${12 + (i * 5) % 9}%` }} />
+                            </div>
                             {i % 2 === 1 && (
                               <Skeleton className="h-20 rounded-md" style={{ width: 176 + ((i * 13) % 36) }} />
                             )}
                             <div className="flex items-center gap-2.5 pt-1">
                               <Skeleton className="h-8 w-8 rounded-full shrink-0" />
-                              <Skeleton className="h-3.5" style={{ width: `${22 + (i * 6) % 14}%` }} />
+                              <Skeleton className="h-3.5" style={{ width: `${16 + (i * 5) % 10}%` }} />
                             </div>
                           </div>
                           <div className="space-y-2.5">
@@ -2696,72 +2706,76 @@ const ChatArea = ({
                     ))}
                   </div>
                 )}
-                {!loadingEvents && events.length === 0 && (
-                  <p className="text-sm text-muted-foreground">No events scheduled.</p>
-                )}
-                {!loadingEvents && eventsByDate.map((group) => (
-                  <div key={group.dateLabel} className="space-y-2">
-                    <p className="text-xs font-medium text-muted-foreground">{group.dateLabel}</p>
-                    {group.items.map((event) => {
-                      const eventRsvpRows = eventRsvps.filter((row) => row.event_id === event.id);
-                      const ownRsvp = eventRsvpRows.find((row) => row.user_id === user?.id)?.status || null;
-                      const goingCount = eventRsvpRows.filter((row) => row.status === "going").length;
-                      const maybeCount = eventRsvpRows.filter((row) => row.status === "maybe").length;
-                      const notGoingCount = eventRsvpRows.filter((row) => row.status === "not_going").length;
-                      const creatorName = memberMap[event.created_by]?.display_name || "Unknown";
-                      return (
-                        <div key={event.id} className="rounded-md border border-border/60 bg-card p-3 space-y-2">
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <p className="text-sm font-semibold text-foreground">{event.title}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {new Date(event.starts_at).toLocaleString()}
-                                {event.ends_at ? ` - ${new Date(event.ends_at).toLocaleString()}` : ""}
-                              </p>
-                              {event.location && <p className="text-xs text-muted-foreground">Location: {event.location}</p>}
-                              {event.description && <p className="text-sm text-foreground mt-1 whitespace-pre-wrap">{event.description}</p>}
-                              <p className="text-[11px] text-muted-foreground mt-1">Created by {creatorName}</p>
+                {!loadingEvents && (
+                  <div className={revealEvents ? "animate-in fade-in-0 duration-200 ease-out space-y-3" : "space-y-3"}>
+                    {events.length === 0 && (
+                      <p className="text-sm text-muted-foreground">No events scheduled.</p>
+                    )}
+                    {eventsByDate.map((group) => (
+                      <div key={group.dateLabel} className="space-y-2">
+                        <p className="text-xs font-medium text-muted-foreground">{group.dateLabel}</p>
+                        {group.items.map((event) => {
+                          const eventRsvpRows = eventRsvps.filter((row) => row.event_id === event.id);
+                          const ownRsvp = eventRsvpRows.find((row) => row.user_id === user?.id)?.status || null;
+                          const goingCount = eventRsvpRows.filter((row) => row.status === "going").length;
+                          const maybeCount = eventRsvpRows.filter((row) => row.status === "maybe").length;
+                          const notGoingCount = eventRsvpRows.filter((row) => row.status === "not_going").length;
+                          const creatorName = memberMap[event.created_by]?.display_name || "Unknown";
+                          return (
+                            <div key={event.id} className="rounded-md border border-border/60 bg-card p-3 space-y-2">
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <p className="text-sm font-semibold text-foreground">{event.title}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {new Date(event.starts_at).toLocaleString()}
+                                    {event.ends_at ? ` - ${new Date(event.ends_at).toLocaleString()}` : ""}
+                                  </p>
+                                  {event.location && <p className="text-xs text-muted-foreground">Location: {event.location}</p>}
+                                  {event.description && <p className="text-sm text-foreground mt-1 whitespace-pre-wrap">{event.description}</p>}
+                                  <p className="text-[11px] text-muted-foreground mt-1">Created by {creatorName}</p>
+                                </div>
+                                <div className="text-[11px] text-muted-foreground text-right">
+                                  <p>Going: {goingCount}</p>
+                                  <p>Maybe: {maybeCount}</p>
+                                  <p>Not going: {notGoingCount}</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => void upsertRsvp(event, "going")}
+                                  disabled={rsvpSavingEventId === event.id}
+                                  className={`px-2 py-1 rounded text-xs border ${
+                                    ownRsvp === "going" ? "border-primary text-primary" : "border-border text-muted-foreground hover:text-foreground"
+                                  }`}
+                                >
+                                  Going
+                                </button>
+                                <button
+                                  onClick={() => void upsertRsvp(event, "maybe")}
+                                  disabled={rsvpSavingEventId === event.id}
+                                  className={`px-2 py-1 rounded text-xs border ${
+                                    ownRsvp === "maybe" ? "border-primary text-primary" : "border-border text-muted-foreground hover:text-foreground"
+                                  }`}
+                                >
+                                  Maybe
+                                </button>
+                                <button
+                                  onClick={() => void upsertRsvp(event, "not_going")}
+                                  disabled={rsvpSavingEventId === event.id}
+                                  className={`px-2 py-1 rounded text-xs border ${
+                                    ownRsvp === "not_going" ? "border-primary text-primary" : "border-border text-muted-foreground hover:text-foreground"
+                                  }`}
+                                >
+                                  Not Going
+                                </button>
+                              </div>
                             </div>
-                            <div className="text-[11px] text-muted-foreground text-right">
-                              <p>Going: {goingCount}</p>
-                              <p>Maybe: {maybeCount}</p>
-                              <p>Not going: {notGoingCount}</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => void upsertRsvp(event, "going")}
-                              disabled={rsvpSavingEventId === event.id}
-                              className={`px-2 py-1 rounded text-xs border ${
-                                ownRsvp === "going" ? "border-primary text-primary" : "border-border text-muted-foreground hover:text-foreground"
-                              }`}
-                            >
-                              Going
-                            </button>
-                            <button
-                              onClick={() => void upsertRsvp(event, "maybe")}
-                              disabled={rsvpSavingEventId === event.id}
-                              className={`px-2 py-1 rounded text-xs border ${
-                                ownRsvp === "maybe" ? "border-primary text-primary" : "border-border text-muted-foreground hover:text-foreground"
-                              }`}
-                            >
-                              Maybe
-                            </button>
-                            <button
-                              onClick={() => void upsertRsvp(event, "not_going")}
-                              disabled={rsvpSavingEventId === event.id}
-                              className={`px-2 py-1 rounded text-xs border ${
-                                ownRsvp === "not_going" ? "border-primary text-primary" : "border-border text-muted-foreground hover:text-foreground"
-                              }`}
-                            >
-                              Not Going
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
+                          );
+                        })}
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
             </div>
           </DialogContent>

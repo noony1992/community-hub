@@ -62,7 +62,7 @@ export const ChannelSidebarSkeleton = ({ embedded = false }: { embedded?: boolea
           {Array.from({ length: 4 }).map((__, row) => (
             <div key={row} className="flex items-center gap-2.5 px-1">
               <Skeleton className="h-4 w-4 rounded-sm shrink-0" />
-              <Skeleton className="h-7 rounded-md" style={{ width: `${58 + ((section + row) * 7) % 16}%` }} />
+              <Skeleton className="h-7 rounded-md" style={{ width: `${42 + ((section + row) * 6) % 14}%` }} />
             </div>
           ))}
         </div>
@@ -87,7 +87,10 @@ export const DMSidebarSkeleton = ({ embedded = false }: { embedded?: boolean }) 
       {Array.from({ length: 8 }).map((_, i) => (
         <div key={i} className="flex items-center gap-3">
           {i % 2 === 0 && <Skeleton className="h-8 w-8 rounded-full shrink-0" />}
-          <Skeleton className="h-9 rounded-md" style={{ width: `${52 + (i * 7) % 22}%` }} />
+          <div className="flex items-center gap-2 flex-1">
+            <Skeleton className="h-9 rounded-md" style={{ width: `${34 + (i * 6) % 16}%` }} />
+            {i % 3 === 1 && <Skeleton className="h-9 rounded-md" style={{ width: `${18 + (i * 4) % 10}%` }} />}
+          </div>
         </div>
       ))}
     </div>
@@ -113,8 +116,17 @@ export const ChatAreaSkeleton = ({ forum = false }: { forum?: boolean }) => (
           <div key={i} className="flex gap-4 items-start">
             <Skeleton className="h-9 w-9 rounded-full shrink-0" />
             <div className="flex-1 space-y-2.5">
-              <Skeleton className="h-3.5" style={{ width: `${24 + (i * 8) % 20}%` }} />
-              <Skeleton className="h-3.5" style={{ width: `${38 + (i * 9) % 24}%` }} />
+              <div className="flex items-center gap-2.5">
+                <Skeleton className="h-3.5" style={{ width: `${18 + (i * 6) % 14}%` }} />
+                {i % 3 !== 0 && <Skeleton className="h-3.5" style={{ width: `${12 + (i * 5) % 10}%` }} />}
+              </div>
+              <Skeleton className="h-3.5" style={{ width: `${30 + (i * 8) % 16}%` }} />
+              {i % 2 === 0 && (
+                <div className="flex items-center gap-2.5">
+                  <Skeleton className="h-3" style={{ width: `${16 + (i * 6) % 12}%` }} />
+                  <Skeleton className="h-3" style={{ width: `${12 + (i * 4) % 10}%` }} />
+                </div>
+              )}
               {i % 4 === 1 && (
                 <Skeleton
                   className="rounded-md"
@@ -144,8 +156,17 @@ export const DMAreaSkeleton = () => (
         <div key={i} className="flex gap-4 items-start">
           <Skeleton className="h-9 w-9 rounded-full shrink-0" />
           <div className="flex-1 space-y-2.5">
-            <Skeleton className="h-3.5" style={{ width: `${26 + (i * 8) % 22}%` }} />
-            <Skeleton className="h-3.5" style={{ width: `${40 + (i * 9) % 28}%` }} />
+            <div className="flex items-center gap-2.5">
+              <Skeleton className="h-3.5" style={{ width: `${18 + (i * 6) % 14}%` }} />
+              {i % 3 !== 2 && <Skeleton className="h-3.5" style={{ width: `${12 + (i * 5) % 11}%` }} />}
+            </div>
+            <Skeleton className="h-3.5" style={{ width: `${30 + (i * 8) % 16}%` }} />
+            {i % 2 === 1 && (
+              <div className="flex items-center gap-2.5">
+                <Skeleton className="h-3" style={{ width: `${15 + (i * 5) % 12}%` }} />
+                <Skeleton className="h-3" style={{ width: `${11 + (i * 4) % 10}%` }} />
+              </div>
+            )}
             {i % 4 === 1 && (
               <Skeleton
                 className="rounded-md"
@@ -171,7 +192,10 @@ export const MemberSidebarSkeleton = ({ forceVisible = false }: { forceVisible?:
           {Array.from({ length: 4 }).map((__, row) => (
             <div key={row} className="flex items-center gap-3.5">
               <Skeleton className="h-8 w-8 rounded-full shrink-0" />
-              <Skeleton className="h-3.5" style={{ width: `${30 + ((section + row) * 10) % 26}%` }} />
+              <div className="flex items-center gap-2.5">
+                <Skeleton className="h-3.5" style={{ width: `${22 + ((section + row) * 8) % 16}%` }} />
+                {row % 2 === 1 && <Skeleton className="h-3.5" style={{ width: `${12 + ((section + row) * 6) % 10}%` }} />}
+              </div>
             </div>
           ))}
         </div>
@@ -189,7 +213,10 @@ export const DiscoverGridSkeleton = () => (
           <div className="flex items-center gap-3">
             <Skeleton className="h-10 w-10 rounded-lg shrink-0" />
             <div className="space-y-2 flex-1">
-              <Skeleton className="h-3.5" style={{ width: `${28 + (i * 9) % 24}%` }} />
+              <div className="flex items-center gap-2.5">
+                <Skeleton className="h-3.5" style={{ width: `${18 + (i * 7) % 13}%` }} />
+                {i % 2 === 0 && <Skeleton className="h-3.5" style={{ width: `${12 + (i * 5) % 9}%` }} />}
+              </div>
               <Skeleton className="h-3" style={{ width: `${20 + (i * 7) % 18}%` }} />
             </div>
           </div>
@@ -244,7 +271,10 @@ export const ServerSettingsSkeleton = () => (
           <Skeleton className="h-14 w-10/12" />
           <Skeleton className="h-9 w-1/3" />
           {Array.from({ length: 5 }).map((_, i) => (
-            <Skeleton key={i} className="h-9" style={{ width: `${52 + (i * 8) % 30}%` }} />
+            <div key={i} className="flex items-center gap-2.5">
+              <Skeleton className="h-9" style={{ width: `${36 + (i * 7) % 18}%` }} />
+              {i % 2 === 0 && <Skeleton className="h-9" style={{ width: `${18 + (i * 5) % 12}%` }} />}
+            </div>
           ))}
         </div>
       </div>
@@ -268,10 +298,18 @@ export const DialogListSkeleton = ({
           {withAvatar && i % 2 === 0 ? (
             <Skeleton className="h-8 w-8 rounded-full shrink-0 mt-0.5" />
           ) : null}
-          <div className="space-y-2.5">
-            <Skeleton className="h-3.5" style={{ width: `${22 + (i * 11) % 24}%` }} />
-            <Skeleton className="h-3.5" style={{ width: `${34 + (i * 9) % 26}%` }} />
-            {i % 2 === 0 && <Skeleton className="h-3" style={{ width: `${28 + (i * 7) % 22}%` }} />}
+          <div className="space-y-2.5 min-w-0">
+            <div className="flex items-center gap-2.5">
+              <Skeleton className="h-3.5" style={{ width: `${16 + (i * 8) % 12}%` }} />
+              {i % 2 === 1 && <Skeleton className="h-3.5" style={{ width: `${11 + (i * 6) % 9}%` }} />}
+            </div>
+            <Skeleton className="h-3.5" style={{ width: `${28 + (i * 8) % 16}%` }} />
+            {i % 2 === 0 && (
+              <div className="flex items-center gap-2.5">
+                <Skeleton className="h-3" style={{ width: `${15 + (i * 6) % 11}%` }} />
+                <Skeleton className="h-3" style={{ width: `${11 + (i * 5) % 9}%` }} />
+              </div>
+            )}
             {withImage && i % 3 === 1 && (
               <Skeleton
                 className="rounded-md"

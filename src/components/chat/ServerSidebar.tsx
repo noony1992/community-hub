@@ -5,6 +5,7 @@ import { useDMContext } from "@/context/DMContext";
 import { Plus, MessageCircle, LogIn, Compass } from "lucide-react";
 import JoinServerDialog from "./JoinServerDialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useLoadingReveal } from "@/hooks/useLoadingReveal";
 
 type ServerSidebarProps = {
   mode?: "rail" | "sheet";
@@ -22,6 +23,7 @@ const ServerSidebar = ({ mode = "rail", onNavigate }: ServerSidebarProps) => {
   const isSheet = mode === "sheet";
   const isDiscoverRoute = location.pathname.startsWith("/discover");
   const isDMActive = isDMMode && !isDiscoverRoute;
+  const revealServers = useLoadingReveal(loadingServers);
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
@@ -96,32 +98,39 @@ const ServerSidebar = ({ mode = "rail", onNavigate }: ServerSidebarProps) => {
               {loadingServers && Array.from({ length: 6 }).map((_, idx) => (
                 <div key={`server-skeleton-${idx}`} className="flex items-center gap-3 px-2 py-2.5">
                   <Skeleton className="h-8 w-8 rounded-md shrink-0" />
-                  <Skeleton className="h-5 w-24" />
+                  <div className="flex items-center gap-2.5">
+                    <Skeleton className="h-5 w-14" />
+                    {idx % 2 === 1 && <Skeleton className="h-5 w-8" />}
+                  </div>
                 </div>
               ))}
-              {!loadingServers && servers.map((server) => {
-                const isActive = server.id === activeServerId && !isDMMode && !isDiscoverRoute;
-                return (
-                  <button
-                    key={server.id}
-                    onClick={() => handleServerClick(server.id)}
-                    className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors ${
-                      isActive ? "bg-primary text-primary-foreground" : "hover:bg-chat-hover text-foreground"
-                    }`}
-                  >
-                    <div className="h-7 w-7 shrink-0 overflow-hidden rounded-md bg-background/60">
-                      {server.icon_url ? (
-                        <img src={server.icon_url} alt={`${server.name} icon`} className="h-full w-full object-cover" />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center text-xs font-semibold">
-                          {server.icon || server.name[0]}
+              {!loadingServers && (
+                <div className={revealServers ? "space-y-1 animate-in fade-in-0 duration-200 ease-out" : "space-y-1"}>
+                  {servers.map((server) => {
+                    const isActive = server.id === activeServerId && !isDMMode && !isDiscoverRoute;
+                    return (
+                      <button
+                        key={server.id}
+                        onClick={() => handleServerClick(server.id)}
+                        className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors ${
+                          isActive ? "bg-primary text-primary-foreground" : "hover:bg-chat-hover text-foreground"
+                        }`}
+                      >
+                        <div className="h-7 w-7 shrink-0 overflow-hidden rounded-md bg-background/60">
+                          {server.icon_url ? (
+                            <img src={server.icon_url} alt={`${server.name} icon`} className="h-full w-full object-cover" />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center text-xs font-semibold">
+                              {server.icon || server.name[0]}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                    <span className="truncate">{server.name}</span>
-                  </button>
-                );
-              })}
+                        <span className="truncate">{server.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -211,35 +220,39 @@ const ServerSidebar = ({ mode = "rail", onNavigate }: ServerSidebarProps) => {
         </div>
       ))}
 
-      {!loadingServers && servers.map((server) => {
-        const isActive = server.id === activeServerId && !isDMMode && !isDiscoverRoute;
-        return (
-          <div key={server.id} className="relative group flex items-center">
-            <div className={`absolute left-0 w-1 rounded-r-full bg-foreground transition-all duration-200 ${isActive ? "h-10" : "h-0 group-hover:h-5"}`} />
-            <button
-              onClick={() => handleServerClick(server.id)}
-              className={`w-12 h-12 overflow-hidden flex items-center justify-center text-sm font-semibold transition-all duration-200 ${
-                isActive
-                  ? "rounded-xl text-primary-foreground"
-                  : "rounded-[24px] text-foreground hover:rounded-xl hover:text-primary-foreground"
-              }`}
-              title={server.name}
-            >
-              {server.icon_url ? (
-                <img
-                  src={server.icon_url}
-                  alt={`${server.name} icon`}
-                  className="w-full h-full object-contain p-1"
-                />
-              ) : (
-                <span className={isActive ? "text-foreground" : "text-foreground"}>
-                  {server.icon || server.name[0]}
-                </span>
-              )}
-            </button>
-          </div>
-        );
-      })}
+      {!loadingServers && (
+        <div className={revealServers ? "animate-in fade-in-0 duration-200 ease-out space-y-2" : "space-y-2"}>
+          {servers.map((server) => {
+            const isActive = server.id === activeServerId && !isDMMode && !isDiscoverRoute;
+            return (
+              <div key={server.id} className="relative group flex items-center">
+                <div className={`absolute left-0 w-1 rounded-r-full bg-foreground transition-all duration-200 ${isActive ? "h-10" : "h-0 group-hover:h-5"}`} />
+                <button
+                  onClick={() => handleServerClick(server.id)}
+                  className={`w-12 h-12 overflow-hidden flex items-center justify-center text-sm font-semibold transition-all duration-200 ${
+                    isActive
+                      ? "rounded-xl text-primary-foreground"
+                      : "rounded-[24px] text-foreground hover:rounded-xl hover:text-primary-foreground"
+                  }`}
+                  title={server.name}
+                >
+                  {server.icon_url ? (
+                    <img
+                      src={server.icon_url}
+                      alt={`${server.name} icon`}
+                      className="w-full h-full object-contain p-1"
+                    />
+                  ) : (
+                    <span className={isActive ? "text-foreground" : "text-foreground"}>
+                      {server.icon || server.name[0]}
+                    </span>
+                  )}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <div className="w-8 h-[2px] bg-border rounded-full" />
 
