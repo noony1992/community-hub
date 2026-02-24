@@ -1190,12 +1190,12 @@ const ChatArea = ({
     </div>
   );
 
-  const renderThreadIndicator = (msg: Message) => {
+  const renderThreadIndicator = (msg: Message, compact = false) => {
     const count = (threadRepliesByParent[msg.id] || []).length;
     if (!count) return null;
     const unreadCount = threadUnreadCountByParent[msg.id] || 0;
     return (
-      <button onClick={() => openThread(msg)} className="flex items-center gap-1 text-xs text-primary hover:underline mt-0.5">
+      <button onClick={() => openThread(msg)} className={`flex items-center gap-1 text-xs text-primary hover:underline ${compact ? "mt-0" : "mt-0.5"}`}>
         <MessageSquare className="w-3 h-3" />
         {count} {count === 1 ? "reply" : "replies"}
         {unreadCount > 0 && <span className="font-semibold">({unreadCount} unread)</span>}
@@ -2209,6 +2209,7 @@ const ChatArea = ({
             const rowSpacingClass = startsNewVisualGroupFromPrev
               ? (startsGroupedRun ? "pt-2 pb-0" : "pt-3 pb-1")
               : (startsGroupedRun ? "pt-0.5 pb-0" : "py-1");
+            const groupedRunGapAdjustClass = startsGroupedRun ? "-mb-[2px]" : "";
             const displayName = isBannedTombstone ? "User Banned" : (msgUser?.display_name || "Unknown");
             const initials = displayName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
             const isFirstUnread = msg.id === firstUnreadTopLevelMessageId;
@@ -2236,9 +2237,10 @@ const ChatArea = ({
                   )}
                 <div
                   id={`msg-${msg.id}`}
-                  className={`${isBannedTombstone ? "pl-1" : "pl-[60px]"} py-0 hover:bg-chat-hover rounded group relative ${isFirstGroupedFollowup ? "-mt-[3px]" : ""} ${
+                  className={`${isBannedTombstone ? "pl-1" : "pl-[60px]"} py-0 hover:bg-chat-hover rounded group relative ${
                     msg.pinned_at ? "border-l-2 border-primary/40 -ml-1 pl-[62px]" : ""
                   }`}
+                  style={isFirstGroupedFollowup ? { marginTop: "-0px" } : undefined}
                 >
                   <span className="text-[11px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity absolute -ml-[42px] mt-0.5">
                     {format(new Date(msg.created_at), "h:mm")}
@@ -2275,8 +2277,8 @@ const ChatArea = ({
                       )}
                       {renderPollCard(msg)}
                       {renderAttachment(msg)}
-                      <MessageReactions messageId={msg.id} />
-                      {!isBannedTombstone && renderThreadIndicator(msg)}
+                      <MessageReactions messageId={msg.id} compact={startsGroupedRun} />
+                      {!isBannedTombstone && renderThreadIndicator(msg, startsGroupedRun)}
                     </>
                   )}
                 </div>
@@ -2304,7 +2306,7 @@ const ChatArea = ({
                     <div className="h-px flex-1 bg-primary/40" />
                   </div>
                 )}
-              <div id={`msg-${msg.id}`} className={`flex gap-4 ${rowSpacingClass} hover:bg-chat-hover rounded px-1 group ${msg.pinned_at ? "border-l-2 border-primary/40" : ""}`}>
+              <div id={`msg-${msg.id}`} className={`flex gap-4 ${rowSpacingClass} ${groupedRunGapAdjustClass} hover:bg-chat-hover rounded px-1 group ${msg.pinned_at ? "border-l-2 border-primary/40" : ""}`}>
                 {!isBannedTombstone && (
                   <div className="w-10 h-10 rounded-full shrink-0 mt-0.5 overflow-hidden bg-secondary flex items-center justify-center text-xs font-semibold text-foreground">
                     {msgUser?.avatar_url ? (

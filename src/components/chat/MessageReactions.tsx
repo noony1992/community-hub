@@ -5,9 +5,10 @@ import { Smile } from "lucide-react";
 
 interface MessageReactionsProps {
   messageId: string;
+  compact?: boolean;
 }
 
-const MessageReactions = ({ messageId }: MessageReactionsProps) => {
+const MessageReactions = ({ messageId, compact = false }: MessageReactionsProps) => {
   const { user } = useAuth();
   const { reactions, addReaction, removeReaction } = useChatContext();
   const msgReactions = reactions[messageId] || [];
@@ -26,8 +27,10 @@ const MessageReactions = ({ messageId }: MessageReactionsProps) => {
     else addReaction(messageId, emoji);
   };
 
+  if (Object.keys(grouped).length === 0) return null;
+
   return (
-    <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+    <div className={`flex items-center gap-1 flex-wrap ${compact ? "mt-0" : "mt-0.5"}`}>
       {Object.entries(grouped).map(([emoji, data]) => (
         <button
           key={emoji}
@@ -42,13 +45,11 @@ const MessageReactions = ({ messageId }: MessageReactionsProps) => {
           <span>{data.count}</span>
         </button>
       ))}
-      {Object.keys(grouped).length > 0 && (
-        <EmojiPicker onSelect={(emoji) => addReaction(messageId, emoji)}>
-          <button className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-secondary text-muted-foreground hover:bg-chat-hover transition-colors">
-            <Smile className="w-3.5 h-3.5" />
-          </button>
-        </EmojiPicker>
-      )}
+      <EmojiPicker onSelect={(emoji) => addReaction(messageId, emoji)}>
+        <button className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-secondary text-muted-foreground hover:bg-chat-hover transition-colors">
+          <Smile className="w-3.5 h-3.5" />
+        </button>
+      </EmojiPicker>
     </div>
   );
 };
