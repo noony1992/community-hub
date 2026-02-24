@@ -2207,8 +2207,8 @@ const ChatArea = ({
               new Date(prevMsg.created_at).getTime() - new Date(prevPrevMsg.created_at).getTime() < 300000;
             const isFirstGroupedFollowup = isGrouped && !prevWasGrouped;
             const rowSpacingClass = startsNewVisualGroupFromPrev
-              ? (startsGroupedRun ? "pt-3 pb-0" : "pt-3 pb-1")
-              : (startsGroupedRun ? "pt-1 pb-0" : "py-1");
+              ? (startsGroupedRun ? "pt-2 pb-0" : "pt-3 pb-1")
+              : (startsGroupedRun ? "pt-0.5 pb-0" : "py-1");
             const displayName = isBannedTombstone ? "User Banned" : (msgUser?.display_name || "Unknown");
             const initials = displayName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
             const isFirstUnread = msg.id === firstUnreadTopLevelMessageId;
@@ -2236,7 +2236,7 @@ const ChatArea = ({
                   )}
                 <div
                   id={`msg-${msg.id}`}
-                  className={`${isBannedTombstone ? "pl-1" : "pl-[60px]"} py-0 hover:bg-chat-hover rounded group relative ${isFirstGroupedFollowup ? "-mt-[2px]" : ""} ${
+                  className={`${isBannedTombstone ? "pl-1" : "pl-[60px]"} py-0 hover:bg-chat-hover rounded group relative ${isFirstGroupedFollowup ? "-mt-[3px]" : ""} ${
                     msg.pinned_at ? "border-l-2 border-primary/40 -ml-1 pl-[62px]" : ""
                   }`}
                 >

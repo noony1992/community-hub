@@ -386,8 +386,8 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
                     new Date(prevMsg.created_at).getTime() - new Date(prevPrevMsg.created_at).getTime() < 300000;
                   const isFirstGroupedFollowup = isGrouped && !prevWasGrouped;
                   const rowSpacingClass = startsNewVisualGroupFromPrev
-                    ? (startsGroupedRun ? "pt-3 pb-0" : "pt-3 pb-1")
-                    : (startsGroupedRun ? "pt-1 pb-0" : "py-1");
+                    ? (startsGroupedRun ? "pt-2 pb-0" : "pt-3 pb-1")
+                    : (startsGroupedRun ? "pt-0.5 pb-0" : "py-1");
 
                   const displayName = sender?.display_name || "Unknown";
                   const initials = displayName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
@@ -395,7 +395,7 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
                   if (isGrouped) {
                     return (
                       <Fragment key={msg.id}>
-                        <div className={`pl-[60px] py-0 hover:bg-chat-hover rounded group relative ${isFirstGroupedFollowup ? "-mt-[2px]" : ""}`}>
+                        <div className={`pl-[60px] py-0 hover:bg-chat-hover rounded group relative ${isFirstGroupedFollowup ? "-mt-[3px]" : ""}`}>
                           <span className="text-[11px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity absolute -ml-[42px] mt-0.5">
                             {format(new Date(msg.created_at), "h:mm")}
                           </span>
