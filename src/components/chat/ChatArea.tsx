@@ -69,7 +69,7 @@ const ChatArea = ({
 }: ChatAreaProps) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
-  const { activeChannelId, activeServerId, channels, messages, sendMessage, scheduleMessage, editMessage, deleteMessage, members, profile, typingUsers, setTyping, addReaction, pinMessage, unpinMessage, moderationState, servers, unreadCountByChannel, channelLastReadAtByChannel, markChannelAsRead, setActiveChannel, loadingChannels, loadingMessages } = useChatContext();
+  const { activeChannelId, activeServerId, channels, messages, sendMessage, scheduleMessage, editMessage, deleteMessage, members, profile, typingUsers, setTyping, addReaction, pinMessage, unpinMessage, moderationState, servers, unreadCountByChannel, channelLastReadAtByChannel, markChannelAsRead, setActiveServer, setActiveChannel, loadingChannels, loadingMessages } = useChatContext();
   const {
     isConnected,
     activeVoiceChannelId,
@@ -142,11 +142,14 @@ const ChatArea = ({
   const [moveVoiceTargetByUser, setMoveVoiceTargetByUser] = useState<Record<string, string>>({});
   const [expandedVideoUserId, setExpandedVideoUserId] = useState<string | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const forumMessagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const shouldAutoScrollRef = useRef(true);
+  const channelScrollPositionsRef = useRef<Record<string, number>>({});
+  const pendingChannelRestoreIdRef = useRef<string | null>(null);
   const restrictionToastAtRef = useRef<number>(0);
   const voiceVideoContainerRefByUser = useRef<Record<string, HTMLDivElement | null>>({});
   const isNearBottom = useCallback(() => {
@@ -264,6 +267,40 @@ const ChatArea = ({
   const loadingMainContent = !!(activeServerId && (loadingChannels || (activeChannelId && loadingMessages)));
   const revealMainContent = useLoadingReveal(loadingMainContent);
   const revealEvents = useLoadingReveal(loadingEvents);
+  const channelScrollStoragePrefix = user?.id ? `scroll:channel:${user.id}:` : "scroll:channel:anon:";
+
+  const getChannelScrollStorageKey = useCallback((channelId: string) => `${channelScrollStoragePrefix}${channelId}`, [channelScrollStoragePrefix]);
+
+  const readSavedChannelScroll = useCallback((channelId: string) => {
+    if (Object.prototype.hasOwnProperty.call(channelScrollPositionsRef.current, channelId)) {
+      const inMemory = channelScrollPositionsRef.current[channelId];
+      if (typeof inMemory === "number" && Number.isFinite(inMemory) && inMemory >= 0) return inMemory;
+    }
+    try {
+      const raw = localStorage.getItem(getChannelScrollStorageKey(channelId));
+      if (raw === null) return null;
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+    } catch {
+      return null;
+    }
+  }, [getChannelScrollStorageKey]);
+
+  const saveChannelScroll = useCallback((channelId: string, scrollTop: number) => {
+    if (!channelId || !Number.isFinite(scrollTop) || scrollTop < 0) return;
+    channelScrollPositionsRef.current[channelId] = scrollTop;
+    try {
+      localStorage.setItem(getChannelScrollStorageKey(channelId), String(Math.round(scrollTop)));
+    } catch {
+      // Ignore storage errors.
+    }
+  }, [getChannelScrollStorageKey]);
+
+  const getActiveChannelScrollContainer = useCallback(() => {
+    if (isForumChannelView) return forumMessagesContainerRef.current;
+    if (isVoiceChannelView) return null;
+    return messagesContainerRef.current;
+  }, [isForumChannelView, isVoiceChannelView]);
 
   const loadEvents = useCallback(async () => {
     if (!activeServerId || !user) return;
@@ -543,6 +580,38 @@ const ChatArea = ({
     if (!threadReadStorageKey) return;
     localStorage.setItem(threadReadStorageKey, JSON.stringify(threadReadAtByParent));
   }, [threadReadAtByParent, threadReadStorageKey]);
+
+  useEffect(() => {
+    pendingChannelRestoreIdRef.current = activeChannelId || null;
+  }, [activeChannelId]);
+
+  useEffect(() => {
+    return () => {
+      if (!activeChannelId) return;
+      const container = getActiveChannelScrollContainer();
+      if (!container) return;
+      saveChannelScroll(activeChannelId, container.scrollTop);
+    };
+  }, [activeChannelId, getActiveChannelScrollContainer, saveChannelScroll]);
+
+  useEffect(() => {
+    if (!activeChannelId || loadingMainContent) return;
+    if (pendingChannelRestoreIdRef.current !== activeChannelId) return;
+    const container = getActiveChannelScrollContainer();
+    if (!container) return;
+
+    const savedTop = readSavedChannelScroll(activeChannelId);
+    const raf = window.requestAnimationFrame(() => {
+      if (savedTop !== null) {
+        const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+        container.scrollTop = Math.min(savedTop, maxTop);
+        shouldAutoScrollRef.current = isNearBottom();
+      }
+      pendingChannelRestoreIdRef.current = null;
+    });
+
+    return () => window.cancelAnimationFrame(raf);
+  }, [activeChannelId, getActiveChannelScrollContainer, isNearBottom, loadingMainContent, readSavedChannelScroll]);
 
   useEffect(() => {
     if (activeUnreadCount > 0) return;
@@ -1137,16 +1206,28 @@ const ChatArea = ({
   const renderContent = (content: string) => {
     const parsed = parseMessageFeatures(content);
     if (parsed.kind === "announcement" || parsed.kind === "question") {
-      return renderContentWithMentions(parsed.text, members);
+      return renderContentWithMentions(parsed.text, members, {
+        channels,
+        onChannelClick: handleChannelReferenceClick,
+        onMentionClick: handleMentionClick,
+      });
     }
     if (parsed.kind === "forum_topic") {
       const topicText = parsed.topic.body && parsed.topic.body !== parsed.topic.title
         ? `${parsed.topic.title}\n${parsed.topic.body}`
         : parsed.topic.title;
-      return renderContentWithMentions(topicText, members);
+      return renderContentWithMentions(topicText, members, {
+        channels,
+        onChannelClick: handleChannelReferenceClick,
+        onMentionClick: handleMentionClick,
+      });
     }
     if (parsed.kind === "plain") {
-      return renderContentWithMentions(parsed.text, members);
+      return renderContentWithMentions(parsed.text, members, {
+        channels,
+        onChannelClick: handleChannelReferenceClick,
+        onMentionClick: handleMentionClick,
+      });
     }
     return parsed.poll.question;
   };
@@ -1212,12 +1293,23 @@ const ChatArea = ({
   }, [firstUnreadTopLevelMessageId]);
 
   const handleMessagesScroll = useCallback(() => {
+    const el = messagesContainerRef.current;
+    if (activeChannelId && el) {
+      saveChannelScroll(activeChannelId, el.scrollTop);
+    }
     shouldAutoScrollRef.current = isNearBottom();
     if (!activeChannelId || activeUnreadCount === 0) return;
     if (shouldAutoScrollRef.current) {
       void markChannelAsRead(activeChannelId);
     }
-  }, [activeChannelId, activeUnreadCount, isNearBottom, markChannelAsRead]);
+  }, [activeChannelId, activeUnreadCount, isNearBottom, markChannelAsRead, saveChannelScroll]);
+
+  const handleForumMessagesScroll = useCallback(() => {
+    if (!activeChannelId) return;
+    const el = forumMessagesContainerRef.current;
+    if (!el) return;
+    saveChannelScroll(activeChannelId, el.scrollTop);
+  }, [activeChannelId, saveChannelScroll]);
 
   const getVoiceMoveTarget = useCallback(
     (userId: string) => {
@@ -1247,6 +1339,28 @@ const ChatArea = ({
   const handleToggleExpandedVideoCard = useCallback((userId: string) => {
     setExpandedVideoUserId((prev) => (prev === userId ? null : userId));
   }, []);
+
+  const handleChannelReferenceClick = useCallback((channelRef: { id: string; server_id?: string }) => {
+    if (channelRef.id === activeChannelId) return;
+    if (channelRef.server_id && channelRef.server_id !== activeServerId) {
+      setActiveServer(channelRef.server_id);
+      window.setTimeout(() => setActiveChannel(channelRef.id), 110);
+      return;
+    }
+    setActiveChannel(channelRef.id);
+  }, [activeChannelId, activeServerId, setActiveChannel, setActiveServer]);
+
+  const openProfileFromAnchor = useCallback((targetUser: typeof members[0] | undefined, anchorEl: HTMLElement) => {
+    if (!targetUser) return;
+    const rect = anchorEl.getBoundingClientRect();
+    setProfilePos({ top: rect.bottom + 4, left: rect.left });
+    setProfileUser(targetUser);
+  }, []);
+
+  const handleMentionClick = useCallback((username: string, anchorEl: HTMLElement) => {
+    const target = members.find((m) => m.username.toLowerCase() === username.toLowerCase());
+    openProfileFromAnchor(target, anchorEl);
+  }, [members, openProfileFromAnchor]);
 
   const handleFullscreenVideoCard = useCallback((userId: string) => {
     const element = voiceVideoContainerRefByUser.current[userId];
@@ -1812,7 +1926,11 @@ const ChatArea = ({
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <div
+            ref={forumMessagesContainerRef}
+            onScroll={handleForumMessagesScroll}
+            className="flex-1 overflow-y-auto p-3 space-y-3"
+          >
             {!activeChannelId && (
               <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
                 <MessageSquare className="w-16 h-16 mb-4 opacity-30" />
@@ -2045,7 +2163,7 @@ const ChatArea = ({
         </div>
 
         {/* Messages */}
-        <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
+        <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="flex-1 overflow-y-auto px-3 py-3 space-y-1">
           {!activeChannelId && (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
               <Hash className="w-16 h-16 mb-4 opacity-30" />
@@ -2063,6 +2181,8 @@ const ChatArea = ({
           {topLevelMessages.map((msg, i) => {
             const msgUser = memberMap[msg.user_id];
             const prevMsg = topLevelMessages[i - 1];
+            const prevPrevMsg = topLevelMessages[i - 2];
+            const nextMsg = topLevelMessages[i + 1];
             const isOwn = msg.user_id === user?.id;
             const isEditing = editingId === msg.id;
             const isBannedTombstone = msg.content === "User Banned";
@@ -2072,6 +2192,23 @@ const ChatArea = ({
               !showDateDivider &&
               prevMsg?.user_id === msg.user_id &&
               new Date(msg.created_at).getTime() - new Date(prevMsg.created_at).getTime() < 300000;
+            const startsNewVisualGroupFromPrev = !!prevMsg && !isGrouped && !showDateDivider;
+            const startsGroupedRun = !isBannedTombstone &&
+              !isGrouped &&
+              !!nextMsg &&
+              nextMsg.user_id === msg.user_id &&
+              isSameDay(new Date(msg.created_at), new Date(nextMsg.created_at)) &&
+              new Date(nextMsg.created_at).getTime() - new Date(msg.created_at).getTime() < 300000;
+            const prevWasGrouped = !isBannedTombstone &&
+              !!prevMsg &&
+              !!prevPrevMsg &&
+              prevPrevMsg.user_id === prevMsg.user_id &&
+              isSameDay(new Date(prevMsg.created_at), new Date(prevPrevMsg.created_at)) &&
+              new Date(prevMsg.created_at).getTime() - new Date(prevPrevMsg.created_at).getTime() < 300000;
+            const isFirstGroupedFollowup = isGrouped && !prevWasGrouped;
+            const rowSpacingClass = startsNewVisualGroupFromPrev
+              ? (startsGroupedRun ? "pt-3 pb-0" : "pt-3 pb-1")
+              : (startsGroupedRun ? "pt-1 pb-0" : "py-1");
             const displayName = isBannedTombstone ? "User Banned" : (msgUser?.display_name || "Unknown");
             const initials = displayName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
             const isFirstUnread = msg.id === firstUnreadTopLevelMessageId;
@@ -2099,12 +2236,12 @@ const ChatArea = ({
                   )}
                 <div
                   id={`msg-${msg.id}`}
-                  className={`${isBannedTombstone ? "pl-1" : "pl-[56px]"} py-0.5 hover:bg-chat-hover rounded group relative ${
-                    msg.pinned_at ? "border-l-2 border-primary/40 -ml-1 pl-[58px]" : ""
+                  className={`${isBannedTombstone ? "pl-1" : "pl-[60px]"} py-0 hover:bg-chat-hover rounded group relative ${isFirstGroupedFollowup ? "-mt-[2px]" : ""} ${
+                    msg.pinned_at ? "border-l-2 border-primary/40 -ml-1 pl-[62px]" : ""
                   }`}
                 >
-                  <span className="text-[11px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity absolute -ml-[38px] mt-0.5">
-                    {format(new Date(msg.created_at), "h:mm a")}
+                  <span className="text-[11px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity absolute -ml-[42px] mt-0.5">
+                    {format(new Date(msg.created_at), "h:mm")}
                   </span>
                   {renderReplyPreview(msg)}
                   {isEditing ? (
@@ -2167,7 +2304,7 @@ const ChatArea = ({
                     <div className="h-px flex-1 bg-primary/40" />
                   </div>
                 )}
-              <div id={`msg-${msg.id}`} className={`flex gap-3 py-1 hover:bg-chat-hover rounded px-1 group ${i > 0 ? "mt-3" : ""} ${msg.pinned_at ? "border-l-2 border-primary/40" : ""}`}>
+              <div id={`msg-${msg.id}`} className={`flex gap-4 ${rowSpacingClass} hover:bg-chat-hover rounded px-1 group ${msg.pinned_at ? "border-l-2 border-primary/40" : ""}`}>
                 {!isBannedTombstone && (
                   <div className="w-10 h-10 rounded-full shrink-0 mt-0.5 overflow-hidden bg-secondary flex items-center justify-center text-xs font-semibold text-foreground">
                     {msgUser?.avatar_url ? (
@@ -2188,11 +2325,7 @@ const ChatArea = ({
                       <span
                         className="text-sm font-semibold text-foreground hover:underline cursor-pointer"
                         onClick={(e) => {
-                          if (msgUser) {
-                            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                            setProfilePos({ top: rect.bottom + 4, left: rect.left });
-                            setProfileUser(msgUser);
-                          }
+                          openProfileFromAnchor(msgUser, e.currentTarget as HTMLElement);
                         }}
                       >
                         {displayName}

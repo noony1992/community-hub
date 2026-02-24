@@ -60,29 +60,105 @@ const MentionAutocomplete = ({ query, members, onSelect, visible }: MentionAutoc
 
 export default MentionAutocomplete;
 
-export const renderContentWithMentions = (content: string, members: { username: string }[]) => {
-  const mentionRegex = /@(\w+)/g;
+type ChannelReference = {
+  id: string;
+  name: string;
+  server_id?: string;
+  type?: string;
+};
+
+type RenderContentOptions = {
+  channels?: ChannelReference[];
+  onChannelClick?: (channel: ChannelReference) => void;
+  onMentionClick?: (username: string, anchorEl: HTMLElement) => void;
+};
+
+export const renderContentWithMentions = (
+  content: string,
+  members: { username: string }[],
+  options?: RenderContentOptions,
+) => {
+  const tokenRegex = /[@#][A-Za-z0-9_-]+/g;
   const parts: (string | JSX.Element)[] = [];
   let lastIndex = 0;
   let match;
+  const channels = options?.channels || [];
 
-  while ((match = mentionRegex.exec(content)) !== null) {
+  while ((match = tokenRegex.exec(content)) !== null) {
     if (match.index > lastIndex) {
       parts.push(content.slice(lastIndex, match.index));
     }
-    const username = match[1];
-    const isMember = members.some((m) => m.username.toLowerCase() === username.toLowerCase());
-    const isEveryone = username.toLowerCase() === "everyone";
-    if (isMember || isEveryone) {
+
+    const token = match[0];
+    const prevChar = match.index > 0 ? content[match.index - 1] : "";
+    const hasBoundary = match.index === 0 || !/[A-Za-z0-9_/-]/.test(prevChar);
+    if (!hasBoundary) {
+      parts.push(token);
+      lastIndex = match.index + token.length;
+      continue;
+    }
+
+    if (token.startsWith("@")) {
+      const username = token.slice(1);
+      const isMember = members.some((m) => m.username.toLowerCase() === username.toLowerCase());
+      const isEveryone = username.toLowerCase() === "everyone";
+      if (isMember || isEveryone) {
+        if (isMember && options?.onMentionClick) {
+          parts.push(
+            <button
+              key={match.index}
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                options.onMentionClick?.(username, e.currentTarget);
+              }}
+              className="inline bg-primary/20 text-primary rounded px-0.5 font-medium hover:bg-primary/30 transition-colors"
+              title={`View @${username}`}
+            >
+              @{username}
+            </button>
+          );
+        } else {
+          parts.push(
+            <span key={match.index} className="bg-primary/20 text-primary rounded px-0.5 font-medium">
+              @{username}
+            </span>
+          );
+        }
+      } else {
+        parts.push(token);
+      }
+      lastIndex = match.index + token.length;
+      continue;
+    }
+
+    const channelName = token.slice(1).toLowerCase();
+    const channel =
+      channels.find((c) => c.name.toLowerCase() === channelName && (c.type === "text" || c.type === "forum")) ||
+      channels.find((c) => c.name.toLowerCase() === channelName);
+
+    if (channel) {
       parts.push(
-        <span key={match.index} className="bg-primary/20 text-primary rounded px-0.5 font-medium">
-          @{username}
-        </span>
+        <button
+          key={match.index}
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            options?.onChannelClick?.(channel);
+          }}
+          className="inline bg-primary/20 text-primary rounded px-0.5 font-medium hover:bg-primary/30 transition-colors"
+          title={`Go to #${channel.name}`}
+        >
+          #{channel.name}
+        </button>
       );
     } else {
-      parts.push(match[0]);
+      parts.push(token);
     }
-    lastIndex = match.index + match[0].length;
+
+    lastIndex = match.index + token.length;
   }
 
   if (lastIndex < content.length) parts.push(content.slice(lastIndex));

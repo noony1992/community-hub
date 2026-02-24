@@ -6,6 +6,7 @@ import { format, isSameDay, isToday, isYesterday } from "date-fns";
 import { parseMessageFeatures } from "@/lib/messageFeatures";
 import { cn } from "@/lib/utils";
 import EmojiPicker from "./EmojiPicker";
+import { renderContentWithMentions } from "./MentionAutocomplete";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -98,7 +99,7 @@ const ThreadPanel = ({
   desktopOverlay = false,
 }: ThreadPanelProps) => {
   const { user } = useAuth();
-  const { getThreadReplies, sendMessage, isThreadFollowed, toggleThreadFollow, messages } = useChatContext();
+  const { getThreadReplies, sendMessage, isThreadFollowed, toggleThreadFollow, messages, channels, activeServerId, activeChannelId, setActiveServer, setActiveChannel } = useChatContext();
   const [replies, setReplies] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -117,6 +118,46 @@ const ThreadPanel = ({
   const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const endRef = useRef<HTMLDivElement>(null);
+  const threadScrollPositionsRef = useRef<Record<string, number>>({});
+  const pendingThreadRestoreIdRef = useRef<string | null>(null);
+  const restoringThreadRef = useRef(false);
+  const threadScrollStoragePrefix = user?.id ? `scroll:thread:${user.id}:` : "scroll:thread:anon:";
+
+  const getThreadScrollStorageKey = useCallback(
+    (threadId: string) => `${threadScrollStoragePrefix}${threadId}`,
+    [threadScrollStoragePrefix],
+  );
+
+  const saveThreadScroll = useCallback((threadId: string, scrollTop: number) => {
+    if (!threadId || !Number.isFinite(scrollTop) || scrollTop < 0) return;
+    threadScrollPositionsRef.current[threadId] = scrollTop;
+    try {
+      localStorage.setItem(getThreadScrollStorageKey(threadId), String(Math.round(scrollTop)));
+    } catch {
+      // Ignore storage errors.
+    }
+  }, [getThreadScrollStorageKey]);
+
+  const readThreadScroll = useCallback((threadId: string) => {
+    if (Object.prototype.hasOwnProperty.call(threadScrollPositionsRef.current, threadId)) {
+      const inMemory = threadScrollPositionsRef.current[threadId];
+      if (typeof inMemory === "number" && Number.isFinite(inMemory) && inMemory >= 0) return inMemory;
+    }
+    try {
+      const raw = localStorage.getItem(getThreadScrollStorageKey(threadId));
+      if (raw === null) return null;
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+    } catch {
+      return null;
+    }
+  }, [getThreadScrollStorageKey]);
+
+  const isNearThreadBottom = useCallback(() => {
+    const el = threadScrollRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 42;
+  }, []);
 
   const dedupeOptimisticReplies = (items: Message[]) => {
     const persistedByFingerprint = new Map<string, number[]>();
@@ -146,6 +187,19 @@ const ThreadPanel = ({
   };
 
   const getAuthorName = useCallback((userId: string) => members[userId]?.display_name || "Unknown", [members]);
+  const mentionMembers = useMemo(
+    () => Object.values(members).flatMap((member) => (member.username ? [{ username: member.username }] : [])),
+    [members],
+  );
+  const handleChannelReferenceClick = useCallback((channelRef: { id: string; server_id?: string }) => {
+    if (channelRef.id === activeChannelId) return;
+    if (channelRef.server_id && channelRef.server_id !== activeServerId) {
+      setActiveServer(channelRef.server_id);
+      window.setTimeout(() => setActiveChannel(channelRef.id), 110);
+      return;
+    }
+    setActiveChannel(channelRef.id);
+  }, [activeChannelId, activeServerId, setActiveChannel, setActiveServer]);
 
   const threadTitle = useMemo(() => {
     if (!parentMessage) return "Thread";
@@ -168,6 +222,8 @@ const ThreadPanel = ({
       setHighlightedMessageId(null);
       return;
     }
+    pendingThreadRestoreIdRef.current = parentMessage.id;
+    restoringThreadRef.current = true;
     shouldStickToBottomRef.current = true;
     setShowJumpToLatest(false);
     setHighlightedMessageId(null);
@@ -187,6 +243,15 @@ const ThreadPanel = ({
       cancelled = true;
     };
   }, [parentMessage, getThreadReplies]);
+
+  useEffect(() => {
+    return () => {
+      if (!parentMessage) return;
+      const el = threadScrollRef.current;
+      if (!el) return;
+      saveThreadScroll(parentMessage.id, el.scrollTop);
+    };
+  }, [parentMessage, saveThreadScroll]);
 
   useEffect(() => {
     return () => {
@@ -219,17 +284,45 @@ const ThreadPanel = ({
   }, [onThreadSeen, parentMessage, replies]);
 
   useEffect(() => {
+    if (loading || restoringThreadRef.current) return;
     if (shouldStickToBottomRef.current) {
       endRef.current?.scrollIntoView({ behavior: "smooth" });
       setShowJumpToLatest(false);
     } else {
       setShowJumpToLatest(true);
     }
-  }, [replies.length]);
+  }, [loading, replies.length]);
+
+  useEffect(() => {
+    if (!parentMessage || loading) return;
+    if (pendingThreadRestoreIdRef.current !== parentMessage.id) return;
+    const el = threadScrollRef.current;
+    if (!el) return;
+
+    const savedTop = readThreadScroll(parentMessage.id);
+    const raf = window.requestAnimationFrame(() => {
+      if (savedTop !== null) {
+        const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+        el.scrollTop = Math.min(savedTop, maxTop);
+        const nearBottom = isNearThreadBottom();
+        shouldStickToBottomRef.current = nearBottom;
+        setShowJumpToLatest(!nearBottom);
+      } else {
+        shouldStickToBottomRef.current = true;
+        endRef.current?.scrollIntoView({ behavior: "auto" });
+        setShowJumpToLatest(false);
+      }
+      restoringThreadRef.current = false;
+      pendingThreadRestoreIdRef.current = null;
+    });
+
+    return () => window.cancelAnimationFrame(raf);
+  }, [isNearThreadBottom, loading, parentMessage, readThreadScroll]);
 
   const handleThreadScroll = () => {
     const el = threadScrollRef.current;
     if (!el) return;
+    if (parentMessage) saveThreadScroll(parentMessage.id, el.scrollTop);
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 42;
     shouldStickToBottomRef.current = nearBottom;
     setShowJumpToLatest(!nearBottom);
@@ -436,20 +529,30 @@ const ThreadPanel = ({
         <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
       </div>
 
-      <div ref={threadScrollRef} onScroll={handleThreadScroll} className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+      <div ref={threadScrollRef} onScroll={handleThreadScroll} className="flex-1 overflow-y-auto px-2 py-2 space-y-3">
         <div ref={parentCardRef} className="bg-secondary/50 rounded-lg p-3 border border-primary/30">
           <div className="flex items-baseline gap-2 mb-0.5">
             <span className="text-xs font-semibold text-foreground">{parentUser}</span>
-            <span className="text-[10px] text-muted-foreground">{format(new Date(parentMessage.created_at), "MMM d, h:mm a")}</span>
+            <span className="text-[10px] text-muted-foreground">{format(new Date(parentMessage.created_at), "MMM d, h:mm")}</span>
           </div>
           {parsedParent.kind === "forum_topic" ? (
             <div className="space-y-1">
               <p className="text-sm font-semibold text-foreground">{parsedParent.topic.title}</p>
-              <p className="text-sm text-foreground whitespace-pre-wrap">{parsedParent.topic.body}</p>
+              <p className="text-sm text-foreground whitespace-pre-wrap">
+                {renderContentWithMentions(parsedParent.topic.body, mentionMembers, {
+                  channels,
+                  onChannelClick: handleChannelReferenceClick,
+                })}
+              </p>
             </div>
           ) : (
             <p className="text-sm text-foreground">
-              {parsedParent.kind === "poll" ? parsedParent.poll.question : parsedParent.text}
+              {parsedParent.kind === "poll"
+                ? parsedParent.poll.question
+                : renderContentWithMentions(parsedParent.text, mentionMembers, {
+                    channels,
+                    onChannelClick: handleChannelReferenceClick,
+                  })}
             </p>
           )}
         </div>
@@ -457,7 +560,7 @@ const ThreadPanel = ({
         {loading && (
           <div className="space-y-3">
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="flex gap-2 rounded-lg border border-border/50 bg-background/40 p-2.5">
+              <div key={i} className="flex gap-3 rounded-lg border border-border/50 bg-background/40 p-2.5">
                 <Skeleton className="h-7 w-7 rounded-full shrink-0" />
                 <div className="min-w-0 flex-1 space-y-2">
                   <div className="flex items-center justify-between gap-2">
@@ -497,7 +600,13 @@ const ThreadPanel = ({
 
             {replies.map((msg, i) => {
               const prevMsg = replies[i - 1];
+              const nextMsg = replies[i + 1];
               const showDateDivider = !prevMsg || !isSameDay(new Date(msg.created_at), new Date(prevMsg.created_at));
+              const isGrouped = !showDateDivider && prevMsg?.user_id === msg.user_id;
+              const startsGroup =
+                !!nextMsg &&
+                isSameDay(new Date(msg.created_at), new Date(nextMsg.created_at)) &&
+                nextMsg.user_id === msg.user_id;
               const commentReplyMeta = parseCommentReplyMeta(msg.content);
               const messageBody = getDisplayText(msg.content);
               const authorName = getAuthorName(msg.user_id);
@@ -507,7 +616,7 @@ const ThreadPanel = ({
                   {showDateDivider && (
                     <div className="flex items-center gap-3 py-1">
                       <div className="h-px flex-1 bg-border/70" />
-                      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      <span className="text-[10px] font-semibold tracking-wide text-muted-foreground">
                         {formatDateDividerLabel(msg.created_at)}
                       </span>
                       <div className="h-px flex-1 bg-border/70" />
@@ -518,66 +627,134 @@ const ThreadPanel = ({
                       replyRefs.current[msg.id] = node;
                     }}
                     className={cn(
-                      "flex gap-2 rounded-lg border border-transparent p-2 transition-colors",
+                      isGrouped
+                        ? "rounded-lg border border-transparent px-2 py-0.5 transition-colors group relative"
+                        : startsGroup
+                          ? "flex gap-3 rounded-lg border border-transparent px-2 pt-2 pb-0.5 transition-colors"
+                          : "flex gap-3 rounded-lg border border-transparent p-2 transition-colors",
                       highlightedMessageId === msg.id ? "bg-primary/10 border-primary/40" : "hover:bg-chat-hover/70",
                     )}
                   >
-                    <div
-                      className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0 text-foreground"
-                      style={{ backgroundColor: `hsl(${(msg.user_id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}
-                    >
-                      {authorName.slice(0, 2).toUpperCase()}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <div className="min-w-0 flex items-baseline gap-1.5">
-                          <span className="text-xs font-semibold text-foreground truncate">{authorName}</span>
-                          <span className="text-[10px] text-muted-foreground shrink-0">{format(new Date(msg.created_at), "h:mm a")}</span>
-                        </div>
+                    {isGrouped ? (
+                      <>
+                        <span className="text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity absolute left-2 top-1.5">
+                          {format(new Date(msg.created_at), "h:mm")}
+                        </span>
                         <button
                           onClick={() => {
                             setReplyToComment(msg);
                             requestAnimationFrame(() => inputRef.current?.focus());
                           }}
-                          className="text-[11px] text-muted-foreground hover:text-primary shrink-0 inline-flex items-center gap-1"
+                          className="absolute right-2 top-1 text-[11px] text-muted-foreground hover:text-primary shrink-0 inline-flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
                           title="Reply to comment"
                         >
                           <Reply className="w-3 h-3" />
                           Reply
                         </button>
-                      </div>
-                      {commentReplyMeta && (
-                        <button
-                          onClick={() => jumpToComment(commentReplyMeta.targetId)}
-                          className="mt-1.5 w-full text-left rounded-md border border-border/70 bg-secondary/30 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
-                          title={`Jump to ${commentReplyMeta.targetAuthor}`}
+                        <div className="min-w-0 pl-[40px]">
+                          {commentReplyMeta && (
+                            <button
+                              onClick={() => jumpToComment(commentReplyMeta.targetId)}
+                              className="mt-1 w-full text-left rounded-md border border-border/70 bg-secondary/30 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
+                              title={`Jump to ${commentReplyMeta.targetAuthor}`}
+                            >
+                              <span className="font-medium text-foreground">Replying to {commentReplyMeta.targetAuthor}</span>
+                              {commentReplyMeta.targetExcerpt ? `: ${commentReplyMeta.targetExcerpt}` : ""}
+                            </button>
+                          )}
+                          <p className="text-sm text-foreground whitespace-pre-wrap break-words mt-0.5">
+                            {renderContentWithMentions(messageBody, mentionMembers, {
+                              channels,
+                              onChannelClick: handleChannelReferenceClick,
+                            })}
+                          </p>
+                          {msg.attachment_url && (
+                            <a
+                              href={msg.attachment_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-2 block rounded-md border border-border/60 bg-secondary/30 p-2 hover:bg-secondary/50 transition-colors"
+                            >
+                              {msg.attachment_type?.startsWith("image/") ? (
+                                <img
+                                  src={msg.attachment_url}
+                                  alt={msg.attachment_name || "Attachment"}
+                                  className="max-h-48 rounded-md object-cover mb-1"
+                                />
+                              ) : null}
+                              <div className="flex items-center gap-2 text-xs text-foreground">
+                                {msg.attachment_type?.startsWith("image/") ? <ImageIcon className="w-3.5 h-3.5 text-primary" /> : <FileIcon className="w-3.5 h-3.5 text-primary" />}
+                                <span className="truncate">{msg.attachment_name || "Attachment"}</span>
+                              </div>
+                            </a>
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div
+                          className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0 text-foreground"
+                          style={{ backgroundColor: `hsl(${(msg.user_id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}
                         >
-                          <span className="font-medium text-foreground">Replying to {commentReplyMeta.targetAuthor}</span>
-                          {commentReplyMeta.targetExcerpt ? `: ${commentReplyMeta.targetExcerpt}` : ""}
-                        </button>
-                      )}
-                      <p className="text-sm text-foreground whitespace-pre-wrap break-words mt-1">{messageBody}</p>
-                      {msg.attachment_url && (
-                        <a
-                          href={msg.attachment_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="mt-2 block rounded-md border border-border/60 bg-secondary/30 p-2 hover:bg-secondary/50 transition-colors"
-                        >
-                          {msg.attachment_type?.startsWith("image/") ? (
-                            <img
-                              src={msg.attachment_url}
-                              alt={msg.attachment_name || "Attachment"}
-                              className="max-h-48 rounded-md object-cover mb-1"
-                            />
-                          ) : null}
-                          <div className="flex items-center gap-2 text-xs text-foreground">
-                            {msg.attachment_type?.startsWith("image/") ? <ImageIcon className="w-3.5 h-3.5 text-primary" /> : <FileIcon className="w-3.5 h-3.5 text-primary" />}
-                            <span className="truncate">{msg.attachment_name || "Attachment"}</span>
+                          {authorName.slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-baseline justify-between gap-2">
+                            <div className="min-w-0 flex items-baseline gap-1.5">
+                              <span className="text-xs font-semibold text-foreground truncate">{authorName}</span>
+                              <span className="text-[10px] text-muted-foreground shrink-0">{format(new Date(msg.created_at), "h:mm")}</span>
+                            </div>
+                            <button
+                              onClick={() => {
+                                setReplyToComment(msg);
+                                requestAnimationFrame(() => inputRef.current?.focus());
+                              }}
+                              className="text-[11px] text-muted-foreground hover:text-primary shrink-0 inline-flex items-center gap-1"
+                              title="Reply to comment"
+                            >
+                              <Reply className="w-3 h-3" />
+                              Reply
+                            </button>
                           </div>
-                        </a>
-                      )}
-                    </div>
+                          {commentReplyMeta && (
+                            <button
+                              onClick={() => jumpToComment(commentReplyMeta.targetId)}
+                              className="mt-1.5 w-full text-left rounded-md border border-border/70 bg-secondary/30 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
+                              title={`Jump to ${commentReplyMeta.targetAuthor}`}
+                            >
+                              <span className="font-medium text-foreground">Replying to {commentReplyMeta.targetAuthor}</span>
+                              {commentReplyMeta.targetExcerpt ? `: ${commentReplyMeta.targetExcerpt}` : ""}
+                            </button>
+                          )}
+                          <p className="text-sm text-foreground whitespace-pre-wrap break-words mt-1">
+                            {renderContentWithMentions(messageBody, mentionMembers, {
+                              channels,
+                              onChannelClick: handleChannelReferenceClick,
+                            })}
+                          </p>
+                          {msg.attachment_url && (
+                            <a
+                              href={msg.attachment_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-2 block rounded-md border border-border/60 bg-secondary/30 p-2 hover:bg-secondary/50 transition-colors"
+                            >
+                              {msg.attachment_type?.startsWith("image/") ? (
+                                <img
+                                  src={msg.attachment_url}
+                                  alt={msg.attachment_name || "Attachment"}
+                                  className="max-h-48 rounded-md object-cover mb-1"
+                                />
+                              ) : null}
+                              <div className="flex items-center gap-2 text-xs text-foreground">
+                                {msg.attachment_type?.startsWith("image/") ? <ImageIcon className="w-3.5 h-3.5 text-primary" /> : <FileIcon className="w-3.5 h-3.5 text-primary" />}
+                                <span className="truncate">{msg.attachment_name || "Attachment"}</span>
+                              </div>
+                            </a>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
                 </Fragment>
               );

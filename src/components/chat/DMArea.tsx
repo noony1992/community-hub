@@ -1,4 +1,4 @@
-import { Fragment, useState, useRef, useEffect, useMemo } from "react";
+import { Fragment, useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useDMContext } from "@/context/DMContext";
 import { useAuth } from "@/context/AuthContext";
 import { AtSign, PlusCircle, Gift, Smile, SendHorizonal, PanelLeft, Menu } from "lucide-react";
@@ -33,11 +33,52 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
   const [input, setInput] = useState("");
   const [friends, setFriends] = useState<FriendItem[]>([]);
   const [loadingFriends, setLoadingFriends] = useState(false);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
+  const dmScrollPositionsRef = useRef<Record<string, number>>({});
+  const pendingDmRestoreIdRef = useRef<string | null>(null);
   const showingInitialSkeleton = !isFriendsView && loadingConversations && conversations.length === 0 && !activeConversationId;
   const revealInitial = useLoadingReveal(showingInitialSkeleton);
   const revealFriends = useLoadingReveal(loadingFriends);
   const revealMessages = useLoadingReveal(!!activeConversationId && loadingDmMessages);
+  const dmScrollStoragePrefix = user?.id ? `scroll:dm:${user.id}:` : "scroll:dm:anon:";
+
+  const getDmScrollStorageKey = useCallback(
+    (conversationId: string) => `${dmScrollStoragePrefix}${conversationId}`,
+    [dmScrollStoragePrefix],
+  );
+
+  const isNearBottom = useCallback(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return false;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  }, []);
+
+  const saveConversationScroll = useCallback((conversationId: string, scrollTop: number) => {
+    if (!conversationId || !Number.isFinite(scrollTop) || scrollTop < 0) return;
+    dmScrollPositionsRef.current[conversationId] = scrollTop;
+    try {
+      localStorage.setItem(getDmScrollStorageKey(conversationId), String(Math.round(scrollTop)));
+    } catch {
+      // Ignore storage errors.
+    }
+  }, [getDmScrollStorageKey]);
+
+  const readConversationScroll = useCallback((conversationId: string) => {
+    if (Object.prototype.hasOwnProperty.call(dmScrollPositionsRef.current, conversationId)) {
+      const inMemory = dmScrollPositionsRef.current[conversationId];
+      if (typeof inMemory === "number" && Number.isFinite(inMemory) && inMemory >= 0) return inMemory;
+    }
+    try {
+      const raw = localStorage.getItem(getDmScrollStorageKey(conversationId));
+      if (raw === null) return null;
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+    } catch {
+      return null;
+    }
+  }, [getDmScrollStorageKey]);
 
   const conversation = conversations.find((c) => c.id === activeConversationId);
   const participant = conversation?.participant;
@@ -47,8 +88,55 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
   }
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [dmMessages.length]);
+    pendingDmRestoreIdRef.current = activeConversationId || null;
+  }, [activeConversationId]);
+
+  useEffect(() => {
+    return () => {
+      if (!activeConversationId) return;
+      const el = messagesContainerRef.current;
+      if (!el) return;
+      saveConversationScroll(activeConversationId, el.scrollTop);
+    };
+  }, [activeConversationId, saveConversationScroll]);
+
+  useEffect(() => {
+    if (isFriendsView && activeConversationId) {
+      const el = messagesContainerRef.current;
+      if (el) saveConversationScroll(activeConversationId, el.scrollTop);
+      return;
+    }
+    if (!isFriendsView && activeConversationId) {
+      pendingDmRestoreIdRef.current = activeConversationId;
+    }
+  }, [activeConversationId, isFriendsView, saveConversationScroll]);
+
+  useEffect(() => {
+    if (!activeConversationId || isFriendsView || loadingDmMessages) return;
+    if (pendingDmRestoreIdRef.current !== activeConversationId) return;
+    const el = messagesContainerRef.current;
+    if (!el) return;
+
+    const savedTop = readConversationScroll(activeConversationId);
+    const raf = window.requestAnimationFrame(() => {
+      if (savedTop !== null) {
+        const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+        el.scrollTop = Math.min(savedTop, maxTop);
+      } else {
+        messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+      }
+      shouldAutoScrollRef.current = isNearBottom();
+      pendingDmRestoreIdRef.current = null;
+    });
+
+    return () => window.cancelAnimationFrame(raf);
+  }, [activeConversationId, isFriendsView, isNearBottom, loadingDmMessages, readConversationScroll]);
+
+  useEffect(() => {
+    if (!activeConversationId || isFriendsView || loadingDmMessages) return;
+    if (!shouldAutoScrollRef.current) return;
+    messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+  }, [activeConversationId, dmMessages.length, isFriendsView, loadingDmMessages]);
 
   useEffect(() => {
     const loadFriends = async () => {
@@ -107,9 +195,9 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
 
   const formatTimestamp = (ts: string) => {
     const date = new Date(ts);
-    if (isToday(date)) return `Today at ${format(date, "h:mm a")}`;
-    if (isYesterday(date)) return `Yesterday at ${format(date, "h:mm a")}`;
-    return format(date, "MM/dd/yyyy h:mm a");
+    if (isToday(date)) return `Today at ${format(date, "h:mm")}`;
+    if (isYesterday(date)) return `Yesterday at ${format(date, "h:mm")}`;
+    return format(date, "MM/dd/yyyy h:mm");
   };
 
   const formatDateDividerLabel = (ts: string) => {
@@ -130,6 +218,14 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
   const handleStartFriendDM = async (friendId: string) => {
     await startConversation(friendId);
   };
+
+  const handleMessagesScroll = useCallback(() => {
+    if (!activeConversationId || isFriendsView) return;
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    saveConversationScroll(activeConversationId, el.scrollTop);
+    shouldAutoScrollRef.current = isNearBottom();
+  }, [activeConversationId, isFriendsView, isNearBottom, saveConversationScroll]);
 
   return (
     <div className={`flex flex-col flex-1 min-w-0 bg-chat-area ${revealInitial ? "animate-in fade-in-0 duration-200 ease-out" : ""}`}>
@@ -162,7 +258,7 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
+      <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="flex-1 overflow-y-auto px-3 py-3 space-y-1">
         {isFriendsView && (
           <div className={`space-y-2 ${!loadingFriends && revealFriends ? "animate-in fade-in-0 duration-200 ease-out" : ""}`}>
             {loadingFriends && (
@@ -271,10 +367,27 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
                 {dmMessages.map((msg, i) => {
                   const sender = profileMap[msg.user_id];
                   const prevMsg = dmMessages[i - 1];
+                  const prevPrevMsg = dmMessages[i - 2];
+                  const nextMsg = dmMessages[i + 1];
                   const showDateDivider = !prevMsg || !isSameDay(new Date(msg.created_at), new Date(prevMsg.created_at));
                   const isGrouped = prevMsg?.user_id === msg.user_id &&
                     !showDateDivider &&
                     new Date(msg.created_at).getTime() - new Date(prevMsg.created_at).getTime() < 300000;
+                  const startsNewVisualGroupFromPrev = !!prevMsg && !isGrouped && !showDateDivider;
+                  const startsGroupedRun = !isGrouped &&
+                    !!nextMsg &&
+                    nextMsg.user_id === msg.user_id &&
+                    isSameDay(new Date(msg.created_at), new Date(nextMsg.created_at)) &&
+                    new Date(nextMsg.created_at).getTime() - new Date(msg.created_at).getTime() < 300000;
+                  const prevWasGrouped = !!prevMsg &&
+                    !!prevPrevMsg &&
+                    prevPrevMsg.user_id === prevMsg.user_id &&
+                    isSameDay(new Date(prevMsg.created_at), new Date(prevPrevMsg.created_at)) &&
+                    new Date(prevMsg.created_at).getTime() - new Date(prevPrevMsg.created_at).getTime() < 300000;
+                  const isFirstGroupedFollowup = isGrouped && !prevWasGrouped;
+                  const rowSpacingClass = startsNewVisualGroupFromPrev
+                    ? (startsGroupedRun ? "pt-3 pb-0" : "pt-3 pb-1")
+                    : (startsGroupedRun ? "pt-1 pb-0" : "py-1");
 
                   const displayName = sender?.display_name || "Unknown";
                   const initials = displayName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
@@ -282,9 +395,9 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
                   if (isGrouped) {
                     return (
                       <Fragment key={msg.id}>
-                        <div className="pl-[52px] py-0.5 hover:bg-chat-hover rounded group relative">
-                          <span className="text-[11px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity absolute -ml-[38px] mt-0.5">
-                            {format(new Date(msg.created_at), "h:mm a")}
+                        <div className={`pl-[60px] py-0 hover:bg-chat-hover rounded group relative ${isFirstGroupedFollowup ? "-mt-[2px]" : ""}`}>
+                          <span className="text-[11px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity absolute -ml-[42px] mt-0.5">
+                            {format(new Date(msg.created_at), "h:mm")}
                           </span>
                           <p className="text-sm text-foreground">
                             {msg.content}
@@ -302,13 +415,13 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
                       {showDateDivider && (
                         <div className="flex items-center gap-3 py-2">
                           <div className="h-px flex-1 bg-border/70" />
-                          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          <span className="text-[11px] font-semibold tracking-wide text-muted-foreground">
                             {formatDateDividerLabel(msg.created_at)}
                           </span>
                           <div className="h-px flex-1 bg-border/70" />
                         </div>
                       )}
-                      <div className={`flex gap-3 py-1 hover:bg-chat-hover rounded px-1 group ${i > 0 ? "mt-3" : ""}`}>
+                      <div className={`flex gap-4 ${rowSpacingClass} hover:bg-chat-hover rounded px-1 group`}>
                         <div
                           className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 mt-0.5 text-foreground"
                           style={{ backgroundColor: `hsl(${(msg.user_id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}

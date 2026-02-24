@@ -4,6 +4,7 @@ import { Pin, X } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useLoadingReveal } from "@/hooks/useLoadingReveal";
+import { renderContentWithMentions } from "./MentionAutocomplete";
 
 interface PinnedMessagesPanelProps {
   open: boolean;
@@ -12,11 +13,20 @@ interface PinnedMessagesPanelProps {
 }
 
 const PinnedMessagesPanel = ({ open, onClose, members }: PinnedMessagesPanelProps) => {
-  const { getPinnedMessages, unpinMessage, activeChannelId, channels } = useChatContext();
+  const { getPinnedMessages, unpinMessage, activeChannelId, activeServerId, channels, setActiveServer, setActiveChannel } = useChatContext();
   const [pinned, setPinned] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const revealPinned = useLoadingReveal(loading);
   const activeChannelName = channels.find((c) => c.id === activeChannelId)?.name || "current channel";
+  const handleChannelReferenceClick = (channelRef: { id: string; server_id?: string }) => {
+    if (channelRef.id === activeChannelId) return;
+    if (channelRef.server_id && channelRef.server_id !== activeServerId) {
+      setActiveServer(channelRef.server_id);
+      window.setTimeout(() => setActiveChannel(channelRef.id), 110);
+      return;
+    }
+    setActiveChannel(channelRef.id);
+  };
 
   useEffect(() => {
     if (!open || !activeChannelId) return;
@@ -128,7 +138,7 @@ const PinnedMessagesPanel = ({ open, onClose, members }: PinnedMessagesPanelProp
                         <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                           <span>{formatDistanceToNow(new Date(msg.created_at), { addSuffix: true })}</span>
                           <span>|</span>
-                          <span>{format(new Date(msg.created_at), "MMM d, h:mm a")}</span>
+                          <span>{format(new Date(msg.created_at), "MMM d, h:mm")}</span>
                         </div>
                       </div>
                     </div>
@@ -142,7 +152,10 @@ const PinnedMessagesPanel = ({ open, onClose, members }: PinnedMessagesPanelProp
                     </button>
                   </div>
                   <p className="text-sm text-foreground mt-2 whitespace-pre-wrap break-words leading-relaxed">
-                    {msg.content || "Message content unavailable"}
+                    {renderContentWithMentions(msg.content || "Message content unavailable", [], {
+                      channels,
+                      onChannelClick: handleChannelReferenceClick,
+                    })}
                   </p>
                   {msg.attachment_url && (
                     <div className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary/40 px-2 py-1 text-[11px] text-muted-foreground">

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { X, MessageSquare, AtSign, Calendar, MoreVertical, Shield } from "lucide-react";
 import { format } from "date-fns";
@@ -39,6 +39,8 @@ const UserProfileCard = ({ user, open, onClose, position, serverId, serverRole, 
   const [loading, setLoading] = useState(false);
   const [showModeration, setShowModeration] = useState(false);
   const [canOpenModMenu, setCanOpenModMenu] = useState(false);
+  const [resolvedPosition, setResolvedPosition] = useState<{ top: number; left: number } | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const checkPermission = async () => {
@@ -55,6 +57,34 @@ const UserProfileCard = ({ user, open, onClose, position, serverId, serverRole, 
     };
     void checkPermission();
   }, [open, serverId, currentUser]);
+
+  useLayoutEffect(() => {
+    if (!open || !position) {
+      setResolvedPosition(null);
+      return;
+    }
+
+    const card = cardRef.current;
+    const cardHeight = card?.offsetHeight ?? 420;
+    const cardWidth = card?.offsetWidth ?? 320;
+    const viewportHeight = window.innerHeight;
+    const viewportWidth = window.innerWidth;
+    const margin = 12;
+
+    let nextTop = position.top;
+    let nextLeft = position.left;
+
+    // Flip above the anchor when opening downward would clip at the viewport bottom.
+    if (nextTop + cardHeight + margin > viewportHeight) {
+      nextTop = position.top - cardHeight - 8;
+    }
+
+    // Clamp into viewport.
+    nextTop = Math.max(margin, Math.min(nextTop, viewportHeight - cardHeight - margin));
+    nextLeft = Math.max(margin, Math.min(nextLeft, viewportWidth - cardWidth - margin));
+
+    setResolvedPosition({ top: nextTop, left: nextLeft });
+  }, [open, position, user.id, user.created_at, serverRole, canOpenModMenu]);
 
   if (!open) return null;
 
@@ -81,8 +111,11 @@ const UserProfileCard = ({ user, open, onClose, position, serverId, serverRole, 
   return (
     <div className="fixed inset-0 z-50" onClick={onClose}>
       <div
+        ref={cardRef}
         className="absolute bg-card border border-border rounded-xl shadow-2xl w-80 overflow-hidden"
-        style={position ? { top: position.top, left: position.left } : { top: "50%", left: "50%", transform: "translate(-50%, -50%)" }}
+        style={position
+          ? { top: resolvedPosition?.top ?? position.top, left: resolvedPosition?.left ?? position.left }
+          : { top: "50%", left: "50%", transform: "translate(-50%, -50%)" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Banner */}
