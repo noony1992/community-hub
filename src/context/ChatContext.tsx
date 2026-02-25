@@ -9,6 +9,7 @@ import { auditLog } from "@/lib/auditLog";
 import { showOperationErrorToast } from "@/lib/errorToasts";
 import { RetryQueue } from "@/lib/retryQueue";
 import { toast } from "sonner";
+import type { RoleBadgeAppearance, RoleTextEffect, RoleTextStyle } from "@/lib/roleAppearance";
 
 interface Profile {
   id: string;
@@ -21,6 +22,11 @@ interface Profile {
   role_color?: string | null;
   role_position?: number | null;
   role_permissions?: string[];
+  role_icon?: string | null;
+  role_username_color?: string | null;
+  role_username_style?: RoleTextStyle | null;
+  role_username_effect?: RoleTextEffect | null;
+  role_badges?: RoleBadgeAppearance[];
 }
 
 interface Server {
@@ -33,6 +39,11 @@ interface Server {
   color: string;
   owner_id: string;
   owner_group_name: string;
+  owner_role_color?: string | null;
+  owner_role_icon?: string | null;
+  owner_role_username_color?: string | null;
+  owner_role_username_style?: RoleTextStyle | null;
+  owner_role_username_effect?: RoleTextEffect | null;
   onboarding_welcome_title?: string | null;
   onboarding_welcome_message?: string | null;
   onboarding_rules_text?: string | null;
@@ -782,6 +793,20 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     const activeServer = servers.find((s) => s.id === activeServerId);
     const ownerGroupName = activeServer?.owner_group_name || "Owner";
+    const ownerRoleColor = activeServer?.owner_role_color || "#f59e0b";
+    const ownerRoleIcon = activeServer?.owner_role_icon || null;
+    const ownerRoleUsernameColor = activeServer?.owner_role_username_color || ownerRoleColor;
+    const ownerRoleUsernameStyle: RoleTextStyle =
+      activeServer?.owner_role_username_style === "normal" ||
+      activeServer?.owner_role_username_style === "italic" ||
+      activeServer?.owner_role_username_style === "underline"
+        ? activeServer.owner_role_username_style
+        : "bold";
+    const ownerRoleUsernameEffect: RoleTextEffect =
+      activeServer?.owner_role_username_effect === "none" ||
+      activeServer?.owner_role_username_effect === "shadow"
+        ? activeServer.owner_role_username_effect
+        : "glow";
     const { data: memberships } = await supabase
       .from("server_members")
       .select("user_id, role")
@@ -813,7 +838,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       supabase.from("profiles").select("*").in("id", userIds),
       supabase
         .from("server_roles")
-        .select("id, name, color, position, permissions")
+        .select("id, name, color, position, permissions, icon, username_color, username_style, username_effect")
         .eq("server_id", activeServerId),
       (supabase as any)
         .from("server_temporary_role_grants")
@@ -829,17 +854,46 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         : Promise.resolve({ data: [] as RolePermissionOverride[] }),
     ]);
 
-    const roleMap = new Map<string, { id: string; color: string; position: number; permissions: string[] }>();
-    const roleById = new Map<string, { id: string; name: string; color: string; position: number; permissions: string[] }>();
+    const roleMap = new Map<string, {
+      id: string;
+      color: string;
+      position: number;
+      permissions: string[];
+      icon: string | null;
+      username_color: string | null;
+      username_style: RoleTextStyle;
+      username_effect: RoleTextEffect;
+    }>();
+    const roleById = new Map<string, {
+      id: string;
+      name: string;
+      color: string;
+      position: number;
+      permissions: string[];
+      icon: string | null;
+      username_color: string | null;
+      username_style: RoleTextStyle;
+      username_effect: RoleTextEffect;
+    }>();
     (serverRoles || []).forEach((role) => {
       const normalizedPermissions = Array.isArray(role.permissions)
         ? role.permissions.filter((p): p is string => typeof p === "string")
         : [];
+      const normalizedStyle: RoleTextStyle = role.username_style === "bold" || role.username_style === "italic" || role.username_style === "underline"
+        ? role.username_style
+        : "normal";
+      const normalizedEffect: RoleTextEffect = role.username_effect === "glow" || role.username_effect === "shadow"
+        ? role.username_effect
+        : "none";
       roleMap.set(role.name.toLowerCase(), {
         id: role.id,
         color: role.color,
         position: role.position,
         permissions: normalizedPermissions,
+        icon: role.icon || null,
+        username_color: role.username_color || null,
+        username_style: normalizedStyle,
+        username_effect: normalizedEffect,
       });
       roleById.set(role.id, {
         id: role.id,
@@ -847,6 +901,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         color: role.color,
         position: role.position,
         permissions: normalizedPermissions,
+        icon: role.icon || null,
+        username_color: role.username_color || null,
+        username_style: normalizedStyle,
+        username_effect: normalizedEffect,
       });
     });
 
@@ -887,13 +945,50 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const temporaryRoleIds = temporaryRoleIdsByUser.get(membership.user_id) || new Set<string>();
         const allRoleIds = new Set<string>();
         const basePermissions = new Set<string>(roleMeta?.permissions || []);
+        const roleBadges: RoleBadgeAppearance[] = [];
         if (roleMeta?.id) allRoleIds.add(roleMeta.id);
+        if (roleMeta) {
+          roleBadges.push({
+            id: roleMeta.id,
+            name: displayRoleName,
+            color: roleMeta.color,
+            icon: roleMeta.icon,
+            username_color: roleMeta.username_color,
+            username_style: roleMeta.username_style,
+            username_effect: roleMeta.username_effect,
+            position: roleMeta.position,
+          });
+        } else if (roleName === "owner") {
+          roleBadges.push({
+            name: ownerGroupName,
+            color: ownerRoleColor,
+            icon: ownerRoleIcon,
+            username_color: ownerRoleUsernameColor,
+            username_style: ownerRoleUsernameStyle,
+            username_effect: ownerRoleUsernameEffect,
+            position: Number.MAX_SAFE_INTEGER,
+          });
+        }
         temporaryRoleIds.forEach((roleId) => {
           const tempRole = roleById.get(roleId);
           if (!tempRole) return;
           allRoleIds.add(roleId);
           tempRole.permissions.forEach((permission) => basePermissions.add(permission));
+          roleBadges.push({
+            id: tempRole.id,
+            name: tempRole.name,
+            color: tempRole.color,
+            icon: tempRole.icon,
+            username_color: tempRole.username_color,
+            username_style: tempRole.username_style,
+            username_effect: tempRole.username_effect,
+            position: tempRole.position,
+          });
         });
+        const uniqueRoleBadges = Array.from(
+          new Map(roleBadges.map((badge) => [`${badge.id || badge.name.toLowerCase()}`, badge])).values(),
+        ).sort((a, b) => (b.position || 0) - (a.position || 0));
+        const topRoleBadge = uniqueRoleBadges[0] || null;
         const effectivePermissions = resolveEffectivePermissions(
           Array.from(basePermissions),
           Array.from(allRoleIds),
@@ -905,11 +1000,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         );
         return {
           ...(base as Profile),
-          server_role: displayRoleName,
-          role_color: roleMeta?.color || null,
-          role_position: roleName === "owner"
-            ? Number.MAX_SAFE_INTEGER
-            : (typeof roleMeta?.position === "number" ? roleMeta.position : null),
+          server_role: topRoleBadge?.name || displayRoleName,
+          role_color: topRoleBadge?.color || null,
+          role_icon: topRoleBadge?.icon || null,
+          role_position: typeof topRoleBadge?.position === "number" ? topRoleBadge.position : null,
+          role_username_color: topRoleBadge?.username_color || null,
+          role_username_style: topRoleBadge?.username_style || "normal",
+          role_username_effect: topRoleBadge?.username_effect || "none",
+          role_badges: uniqueRoleBadges,
           role_permissions: effectivePermissions,
         } as Profile;
       })

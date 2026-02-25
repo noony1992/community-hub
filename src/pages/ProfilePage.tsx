@@ -13,6 +13,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ProfilePageSkeleton } from "@/components/skeletons/AppSkeletons";
+import RoleBadges from "@/components/chat/RoleBadges";
+import { getRoleNamePresentation, type RoleBadgeAppearance } from "@/lib/roleAppearance";
 
 type ProfileRecord = {
   id: string;
@@ -31,8 +33,14 @@ type ProfileRecord = {
 type FriendshipStatus = "none" | "outgoing" | "incoming" | "friends";
 
 type ServerRoleLabel = {
+  id?: string;
   name: string;
   color: string | null;
+  icon: string | null;
+  username_color: string | null;
+  username_style: string | null;
+  username_effect: string | null;
+  position: number;
 };
 
 const ProfilePage = () => {
@@ -56,7 +64,7 @@ const ProfilePage = () => {
   const [friendshipRowId, setFriendshipRowId] = useState<string | null>(null);
   const [friendActionLoading, setFriendActionLoading] = useState(false);
   const [dmLoading, setDmLoading] = useState(false);
-  const [serverRoleLabel, setServerRoleLabel] = useState<ServerRoleLabel | null>(null);
+  const [serverRoleBadges, setServerRoleBadges] = useState<ServerRoleLabel[]>([]);
   const [showModeration, setShowModeration] = useState(false);
   const [canOpenModMenu, setCanOpenModMenu] = useState(false);
 
@@ -139,7 +147,7 @@ const ProfilePage = () => {
   useEffect(() => {
     const loadServerRole = async () => {
       if (!contextServerId || !targetUserId) {
-        setServerRoleLabel(null);
+        setServerRoleBadges([]);
         return;
       }
 
@@ -151,26 +159,97 @@ const ProfilePage = () => {
         .maybeSingle();
 
       if (!membership?.role) {
-        setServerRoleLabel(null);
+        setServerRoleBadges([]);
         return;
       }
 
-      if (membership.role === "owner") {
-        setServerRoleLabel({ name: "owner", color: "#f59e0b" });
-        return;
-      }
-
-      const { data: role } = await supabase
-        .from("server_roles")
-        .select("name, color")
+      const { data: temporaryGrants } = await (supabase as any)
+        .from("server_temporary_role_grants")
+        .select("role_id, expires_at")
         .eq("server_id", contextServerId)
-        .eq("name", membership.role)
-        .maybeSingle();
+        .eq("user_id", targetUserId);
 
-      setServerRoleLabel({
-        name: role?.name || membership.role,
-        color: role?.color || null,
+      const activeTemporaryRoleIds = ((temporaryGrants || []) as Array<{ role_id: string; expires_at: string | null }>)
+        .filter((grant) => !grant.expires_at || new Date(grant.expires_at).getTime() > Date.now())
+        .map((grant) => grant.role_id);
+
+      const { data: serverRoles } = await supabase
+        .from("server_roles")
+        .select("id, name, color, position, icon, username_color, username_style, username_effect")
+        .eq("server_id", contextServerId);
+
+      const roleById = new Map((serverRoles || []).map((role) => [role.id, role]));
+      const roleByName = new Map((serverRoles || []).map((role) => [role.name.toLowerCase(), role]));
+
+      const badges: ServerRoleLabel[] = [];
+      if (membership.role === "owner") {
+        const { data: serverRow } = await supabase
+          .from("servers")
+          .select("owner_group_name, owner_role_color, owner_role_icon, owner_role_username_color, owner_role_username_style, owner_role_username_effect")
+          .eq("id", contextServerId)
+          .maybeSingle();
+        badges.push({
+          name: serverRow?.owner_group_name || "owner",
+          color: serverRow?.owner_role_color || "#f59e0b",
+          icon: serverRow?.owner_role_icon || null,
+          username_color: serverRow?.owner_role_username_color || (serverRow?.owner_role_color || "#f59e0b"),
+          username_style:
+            serverRow?.owner_role_username_style === "normal" ||
+            serverRow?.owner_role_username_style === "italic" ||
+            serverRow?.owner_role_username_style === "underline"
+              ? serverRow.owner_role_username_style
+              : "bold",
+          username_effect:
+            serverRow?.owner_role_username_effect === "none" ||
+            serverRow?.owner_role_username_effect === "shadow"
+              ? serverRow.owner_role_username_effect
+              : "glow",
+          position: Number.MAX_SAFE_INTEGER,
+        });
+      } else {
+        const baseRole = roleByName.get(membership.role.toLowerCase());
+        if (baseRole) {
+          badges.push({
+            id: baseRole.id,
+            name: baseRole.name,
+            color: baseRole.color || null,
+            icon: baseRole.icon || null,
+            username_color: baseRole.username_color || null,
+            username_style: baseRole.username_style || "normal",
+            username_effect: baseRole.username_effect || "none",
+            position: baseRole.position || 0,
+          });
+        } else {
+          badges.push({
+            name: membership.role,
+            color: null,
+            icon: null,
+            username_color: null,
+            username_style: "normal",
+            username_effect: "none",
+            position: 0,
+          });
+        }
+      }
+
+      activeTemporaryRoleIds.forEach((roleId) => {
+        const role = roleById.get(roleId);
+        if (!role) return;
+        badges.push({
+          id: role.id,
+          name: role.name,
+          color: role.color || null,
+          icon: role.icon || null,
+          username_color: role.username_color || null,
+          username_style: role.username_style || "normal",
+          username_effect: role.username_effect || "none",
+          position: role.position || 0,
+        });
       });
+
+      const deduped = Array.from(new Map(badges.map((badge) => [`${badge.id || badge.name.toLowerCase()}`, badge])).values())
+        .sort((a, b) => b.position - a.position);
+      setServerRoleBadges(deduped);
     };
 
     void loadServerRole();
@@ -193,6 +272,13 @@ const ProfilePage = () => {
   }, [contextServerId, isOwn, user]);
 
   const initials = useMemo(() => (profile?.display_name || "U").split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(), [profile?.display_name]);
+  const primaryRoleBadge = serverRoleBadges[0] || null;
+  const primaryRoleNamePresentation = getRoleNamePresentation({
+    role_color: primaryRoleBadge?.color || null,
+    role_username_color: primaryRoleBadge?.username_color || null,
+    role_username_style: primaryRoleBadge?.username_style || null,
+    role_username_effect: primaryRoleBadge?.username_effect || null,
+  });
 
   const uploadAsset = async (file: File, type: "avatar" | "banner") => {
     if (!isOwn || !profile) return;
@@ -427,7 +513,12 @@ const ProfilePage = () => {
                   {profile.avatar_url ? <img src={profile.avatar_url} alt={profile.display_name} className="w-full h-full object-cover" /> : initials}
                 </div>
                 <div className="pb-0.5 min-w-0">
-                  <h1 className="text-xl sm:text-2xl font-bold text-foreground drop-shadow-sm truncate">{profile.display_name}</h1>
+                  <h1
+                    className={`text-xl sm:text-2xl text-foreground drop-shadow-sm truncate ${primaryRoleNamePresentation.className}`}
+                    style={primaryRoleNamePresentation.style}
+                  >
+                    {profile.display_name}
+                  </h1>
                   <p className="text-sm text-muted-foreground truncate">@{profile.username}</p>
                 </div>
               </div>
@@ -553,15 +644,10 @@ const ProfilePage = () => {
                   <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Pronouns</p>
                   <p>{isOwn ? form.pronouns || "Not set" : profile.pronouns || "Not set"}</p>
                 </div>
-                {serverRoleLabel && (
+                {serverRoleBadges.length > 0 && (
                   <div className="rounded-md bg-secondary/50 px-3 py-2 text-sm">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Server Role</p>
-                    <span
-                      className="inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium capitalize"
-                      style={{ borderColor: serverRoleLabel.color || "hsl(var(--border))", color: serverRoleLabel.color || "hsl(var(--foreground))" }}
-                    >
-                      {serverRoleLabel.name}
-                    </span>
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Server Roles</p>
+                    <RoleBadges badges={serverRoleBadges as RoleBadgeAppearance[]} />
                   </div>
                 )}
                 <div className="rounded-md bg-secondary/50 px-3 py-2 text-sm flex items-center gap-2">

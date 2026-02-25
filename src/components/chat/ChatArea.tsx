@@ -19,6 +19,7 @@ import { encodeForumTopic, encodePoll, encodeQuestion, parseMessageFeatures, typ
 import { useSearchParams } from "react-router-dom";
 import { ChatAreaSkeleton } from "@/components/skeletons/AppSkeletons";
 import { useLoadingReveal } from "@/hooks/useLoadingReveal";
+import { getRoleNamePresentation } from "@/lib/roleAppearance";
 
 type ServerEvent = {
   id: string;
@@ -2211,6 +2212,7 @@ const ChatArea = ({
               : (startsGroupedRun ? "pt-0.5 pb-0" : "py-1");
             const groupedRunGapAdjustClass = startsGroupedRun ? "-mb-[2px]" : "";
             const displayName = isBannedTombstone ? "User Banned" : (msgUser?.display_name || "Unknown");
+            const displayNamePresentation = getRoleNamePresentation(msgUser);
             const initials = displayName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
             const isFirstUnread = msg.id === firstUnreadTopLevelMessageId;
 
@@ -2325,7 +2327,8 @@ const ChatArea = ({
                   <div className="flex items-baseline gap-2">
                     {!isBannedTombstone ? (
                       <span
-                        className="text-sm font-semibold text-foreground hover:underline cursor-pointer"
+                        className={`text-sm text-foreground hover:underline cursor-pointer ${displayNamePresentation.className}`}
+                        style={displayNamePresentation.style}
                         onClick={(e) => {
                           openProfileFromAnchor(msgUser, e.currentTarget as HTMLElement);
                         }}
@@ -2997,6 +3000,7 @@ const ChatArea = ({
           serverId={activeServerId || undefined}
           serverRole={profileUser.server_role || undefined}
           serverRoleColor={profileUser.role_color || undefined}
+          serverRoleBadges={profileUser.role_badges || []}
         />
       )}
     </div>

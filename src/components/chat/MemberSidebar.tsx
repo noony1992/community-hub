@@ -4,6 +4,7 @@ import StatusIndicator from "./StatusIndicator";
 import UserProfileCard from "./UserProfileCard";
 import { MemberSidebarSkeleton } from "@/components/skeletons/AppSkeletons";
 import { useLoadingReveal } from "@/hooks/useLoadingReveal";
+import { getRoleNamePresentation, type RoleBadgeAppearance } from "@/lib/roleAppearance";
 
 type SidebarMember = {
   id: string;
@@ -13,6 +14,11 @@ type SidebarMember = {
   server_role?: string | null;
   role_position?: number | null;
   role_color?: string | null;
+  role_icon?: string | null;
+  role_username_color?: string | null;
+  role_username_style?: string | null;
+  role_username_effect?: string | null;
+  role_badges?: RoleBadgeAppearance[];
 };
 
 const MemberItem = ({
@@ -23,6 +29,7 @@ const MemberItem = ({
   onUserClick: (user: SidebarMember, e: React.MouseEvent) => void;
 }) => {
   const initials = user.display_name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
+  const roleNamePresentation = getRoleNamePresentation(user);
   return (
     <button
       onClick={(e) => onUserClick(user, e)}
@@ -48,7 +55,10 @@ const MemberItem = ({
         )}
         <StatusIndicator status={user.status as "online" | "idle" | "dnd" | "offline"} className="absolute -bottom-0.5 -right-0.5" />
       </div>
-      <span className={`text-sm truncate ${user.status === "offline" ? "text-muted-foreground" : "text-secondary-foreground"}`}>
+      <span
+        className={`text-sm truncate ${user.status === "offline" ? "text-muted-foreground" : "text-secondary-foreground"} ${roleNamePresentation.className}`}
+        style={roleNamePresentation.style}
+      >
         {user.display_name}
       </span>
     </button>
@@ -134,6 +144,7 @@ const MemberSidebar = ({ forceVisible = false }: { forceVisible?: boolean }) => 
           serverId={activeServerId || undefined}
           serverRole={profileUser.server_role || undefined}
           serverRoleColor={profileUser.role_color || undefined}
+          serverRoleBadges={profileUser.role_badges || []}
         />
       )}
     </div>

@@ -1021,28 +1021,40 @@ export type Database = {
           color: string
           created_at: string
           id: string
+          icon: string | null
           name: string
           permissions: Json
           position: number
           server_id: string
+          username_color: string | null
+          username_effect: string
+          username_style: string
         }
         Insert: {
           color?: string
           created_at?: string
           id?: string
+          icon?: string | null
           name: string
           permissions?: Json
           position?: number
           server_id: string
+          username_color?: string | null
+          username_effect?: string
+          username_style?: string
         }
         Update: {
           color?: string
           created_at?: string
           id?: string
+          icon?: string | null
           name?: string
           permissions?: Json
           position?: number
           server_id?: string
+          username_color?: string | null
+          username_effect?: string
+          username_style?: string
         }
         Relationships: [
           {
@@ -1069,6 +1081,11 @@ export type Database = {
           onboarding_welcome_title: string | null
           owner_id: string
           owner_group_name: string
+          owner_role_color: string | null
+          owner_role_icon: string | null
+          owner_role_username_color: string | null
+          owner_role_username_effect: string
+          owner_role_username_style: string
         }
         Insert: {
           banner_url?: string | null
@@ -1084,6 +1101,11 @@ export type Database = {
           onboarding_welcome_title?: string | null
           owner_id: string
           owner_group_name?: string
+          owner_role_color?: string | null
+          owner_role_icon?: string | null
+          owner_role_username_color?: string | null
+          owner_role_username_effect?: string
+          owner_role_username_style?: string
         }
         Update: {
           banner_url?: string | null
@@ -1099,6 +1121,11 @@ export type Database = {
           onboarding_welcome_title?: string | null
           owner_id?: string
           owner_group_name?: string
+          owner_role_color?: string | null
+          owner_role_icon?: string | null
+          owner_role_username_color?: string | null
+          owner_role_username_effect?: string
+          owner_role_username_style?: string
         }
         Relationships: [
           {

@@ -8,6 +8,8 @@ import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import StatusIndicator from "./StatusIndicator";
 import UserModerationSidebar from "./UserModerationSidebar";
+import RoleBadges from "./RoleBadges";
+import { getRoleNamePresentation, type RoleBadgeAppearance } from "@/lib/roleAppearance";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,6 +25,10 @@ interface UserProfileCardProps {
     avatar_url: string | null;
     status: string;
     created_at?: string;
+    role_color?: string | null;
+    role_username_color?: string | null;
+    role_username_style?: string | null;
+    role_username_effect?: string | null;
   };
   open: boolean;
   onClose: () => void;
@@ -30,9 +36,10 @@ interface UserProfileCardProps {
   serverId?: string;
   serverRole?: string;
   serverRoleColor?: string;
+  serverRoleBadges?: RoleBadgeAppearance[];
 }
 
-const UserProfileCard = ({ user, open, onClose, position, serverId, serverRole, serverRoleColor }: UserProfileCardProps) => {
+const UserProfileCard = ({ user, open, onClose, position, serverId, serverRole, serverRoleColor, serverRoleBadges = [] }: UserProfileCardProps) => {
   const { user: currentUser } = useAuth();
   const { startConversation } = useDMContext();
   const navigate = useNavigate();
@@ -91,6 +98,19 @@ const UserProfileCard = ({ user, open, onClose, position, serverId, serverRole, 
   const initials = user.display_name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   const avatarColor = `hsl(${(user.id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)`;
   const isSelf = user.id === currentUser?.id;
+  const roleNamePresentation = getRoleNamePresentation({
+    role_color: user.role_color || serverRoleColor || null,
+    role_username_color: user.role_username_color || null,
+    role_username_style: user.role_username_style || null,
+    role_username_effect: user.role_username_effect || null,
+  });
+  const fallbackBadge = serverRole
+    ? [{
+        name: serverRole,
+        color: serverRoleColor || user.role_color || null,
+      }]
+    : [];
+  const effectiveBadges = serverRoleBadges.length > 0 ? serverRoleBadges : fallbackBadge;
 
   const handleDM = async () => {
     if (isSelf) {
@@ -166,16 +186,9 @@ const UserProfileCard = ({ user, open, onClose, position, serverId, serverRole, 
 
         {/* Info */}
         <div className="p-4 pt-2">
-          <h3 className="text-lg font-bold text-foreground">{user.display_name}</h3>
+          <h3 className={`text-lg text-foreground ${roleNamePresentation.className}`} style={roleNamePresentation.style}>{user.display_name}</h3>
           <p className="text-sm text-muted-foreground">@{user.username}</p>
-          {serverRole && (
-            <span
-              className="mt-2 inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium"
-              style={{ borderColor: serverRoleColor || "hsl(var(--border))", color: serverRoleColor || "hsl(var(--foreground))" }}
-            >
-              {serverRole}
-            </span>
-          )}
+          <RoleBadges badges={effectiveBadges} className="mt-2" />
 
           <div className="mt-3 pt-3 border-t border-border space-y-2">
             <div className="flex items-center gap-2 text-sm">

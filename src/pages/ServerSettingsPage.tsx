@@ -19,6 +19,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { DialogListSkeleton, ServerSettingsSkeleton } from "@/components/skeletons/AppSkeletons";
+import { getRoleNamePresentation, type RoleTextEffect, type RoleTextStyle } from "@/lib/roleAppearance";
+import RoleBadges from "@/components/chat/RoleBadges";
 
 interface MemberWithRole {
   id: string;
@@ -34,6 +36,10 @@ interface ServerRole {
   color: string;
   position: number;
   permissions: string[];
+  icon: string | null;
+  username_color: string | null;
+  username_style: RoleTextStyle;
+  username_effect: RoleTextEffect;
 }
 
 interface TemporaryRoleGrantItem {
@@ -64,6 +70,10 @@ interface RoleTemplateItem {
       color: string;
       position: number;
       permissions: string[];
+      icon: string | null;
+      username_color: string | null;
+      username_style: RoleTextStyle;
+      username_effect: RoleTextEffect;
     }>;
   };
   created_at: string;
@@ -285,6 +295,8 @@ const formatDuration = (ms: number) => {
   return `${mins}m`;
 };
 
+const normalizeRoleName = (value: string) => value.trim().toLowerCase();
+
 const ServerSettingsPage = () => {
   const navigate = useNavigate();
   const { serverId } = useParams<{ serverId: string }>();
@@ -332,7 +344,16 @@ const ServerSettingsPage = () => {
   const [exportedTemplateJson, setExportedTemplateJson] = useState("");
   const [newRoleName, setNewRoleName] = useState("");
   const [newRoleColor, setNewRoleColor] = useState("#9CA3AF");
+  const [newRoleIcon, setNewRoleIcon] = useState("");
+  const [newRoleUsernameColor, setNewRoleUsernameColor] = useState("");
+  const [newRoleUsernameStyle, setNewRoleUsernameStyle] = useState<RoleTextStyle>("normal");
+  const [newRoleUsernameEffect, setNewRoleUsernameEffect] = useState<RoleTextEffect>("none");
   const [ownerGroupName, setOwnerGroupName] = useState("Owner");
+  const [ownerRoleIcon, setOwnerRoleIcon] = useState("");
+  const [ownerRoleColor, setOwnerRoleColor] = useState("#f59e0b");
+  const [ownerRoleUsernameColor, setOwnerRoleUsernameColor] = useState("");
+  const [ownerRoleUsernameStyle, setOwnerRoleUsernameStyle] = useState<RoleTextStyle>("bold");
+  const [ownerRoleUsernameEffect, setOwnerRoleUsernameEffect] = useState<RoleTextEffect>("glow");
   const [memberSearch, setMemberSearch] = useState("");
   const [members, setMembers] = useState<MemberWithRole[]>([]);
   const [discoverable, setDiscoverable] = useState(true);
@@ -344,6 +365,20 @@ const ServerSettingsPage = () => {
   const [renameGroupValue, setRenameGroupValue] = useState("");
   const [updatingRoleUserId, setUpdatingRoleUserId] = useState<string | null>(null);
   const [creatingRole, setCreatingRole] = useState(false);
+  const [savingRoleAppearanceId, setSavingRoleAppearanceId] = useState<string | null>(null);
+  const [roleEditorOpen, setRoleEditorOpen] = useState(false);
+  const [roleEditorTarget, setRoleEditorTarget] = useState<{ type: "owner" } | { type: "role"; id: string } | null>(null);
+  const [roleAppearanceDraft, setRoleAppearanceDraft] = useState<{
+    icon: string;
+    usernameColor: string;
+    usernameStyle: RoleTextStyle;
+    usernameEffect: RoleTextEffect;
+  }>({
+    icon: "",
+    usernameColor: "",
+    usernameStyle: "normal",
+    usernameEffect: "none",
+  });
   const [updatingRolePermissionsId, setUpdatingRolePermissionsId] = useState<string | null>(null);
   const [deletingRoleId, setDeletingRoleId] = useState<string | null>(null);
   const [reorderingRoleId, setReorderingRoleId] = useState<string | null>(null);
@@ -405,17 +440,75 @@ const ServerSettingsPage = () => {
   const [newOnboardingStepDescription, setNewOnboardingStepDescription] = useState("");
   const [newOnboardingStepChannelId, setNewOnboardingStepChannelId] = useState("");
   const [newOnboardingStepRequired, setNewOnboardingStepRequired] = useState(true);
+  const [rolesSubtab, setRolesSubtab] = useState<"templates" | "manageUsers">("manageUsers");
   const isMobile = useIsMobile();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const server = useMemo(() => servers.find((s) => s.id === serverId), [servers, serverId]);
   const isOwner = !!user && !!server && server.owner_id === user.id;
   const currentMember = members.find((m) => m.id === user?.id);
-  const currentRole = roles.find((role) => role.name.toLowerCase() === (currentMember?.role || "").toLowerCase());
-  const hasManageChannelsPermission = (currentRole?.permissions || []).includes("manage_channels");
+  const roleById = useMemo(() => new Map(roles.map((role) => [role.id, role])), [roles]);
+  const roleByName = useMemo(() => new Map(roles.map((role) => [role.name.toLowerCase(), role])), [roles]);
+  const activeAssignedRoleNamesByUser = useMemo(() => {
+    const now = Date.now();
+    const byUser = new Map<string, string[]>();
+    temporaryRoleGrants
+      .filter((grant) => !grant.expires_at || new Date(grant.expires_at).getTime() > now)
+      .forEach((grant) => {
+        const role = roleById.get(grant.role_id);
+        if (!role) return;
+        const current = byUser.get(grant.user_id) || [];
+        current.push(role.name);
+        byUser.set(grant.user_id, current);
+      });
+    return byUser;
+  }, [temporaryRoleGrants, roleById]);
+  const persistentAssignedRoleNamesByUser = useMemo(() => {
+    const byUser = new Map<string, string[]>();
+    temporaryRoleGrants
+      .filter((grant) => !grant.expires_at)
+      .forEach((grant) => {
+        const role = roleById.get(grant.role_id);
+        if (!role) return;
+        const current = byUser.get(grant.user_id) || [];
+        current.push(role.name);
+        byUser.set(grant.user_id, current);
+      });
+    return byUser;
+  }, [temporaryRoleGrants, roleById]);
+  const sortRoleNamesByPriority = useCallback((roleNames: string[]) => {
+    const deduped = Array.from(new Set(roleNames.map((name) => name.trim()).filter(Boolean)));
+    return deduped
+      .filter((name) => !!roleByName.get(normalizeRoleName(name)))
+      .sort((a, b) => {
+        const aPos = roleByName.get(normalizeRoleName(a))?.position ?? Number.NEGATIVE_INFINITY;
+        const bPos = roleByName.get(normalizeRoleName(b))?.position ?? Number.NEGATIVE_INFINITY;
+        return bPos - aPos;
+      });
+  }, [roleByName]);
+  const getMemberAssignedRoleNames = useCallback((member: MemberWithRole) => {
+    const extraRoles = persistentAssignedRoleNamesByUser.get(member.id) || [];
+    return sortRoleNamesByPriority([member.role, ...extraRoles]);
+  }, [persistentAssignedRoleNamesByUser, sortRoleNamesByPriority]);
+  const currentRoleNames = useMemo(() => {
+    if (!currentMember) return [];
+    return sortRoleNamesByPriority([currentMember.role, ...(activeAssignedRoleNamesByUser.get(currentMember.id) || [])]);
+  }, [activeAssignedRoleNamesByUser, currentMember, sortRoleNamesByPriority]);
+  const currentRole = currentRoleNames
+    .map((roleName) => roleByName.get(normalizeRoleName(roleName)))
+    .find((role): role is ServerRole => !!role) || null;
+  const currentPermissions = useMemo(() => {
+    const next = new Set<string>();
+    currentRoleNames.forEach((roleName) => {
+      const role = roleByName.get(normalizeRoleName(roleName));
+      role?.permissions.forEach((permission) => next.add(permission));
+    });
+    return next;
+  }, [currentRoleNames, roleByName]);
+  const hasManageChannelsPermission = currentPermissions.has("manage_channels");
   const moderationKeys = ["mod_menu", "ban_users", "kick_users", "timeout_users", "mute_users"];
-  const hasModerationPermission = isOwner || moderationKeys.some((key) => (currentRole?.permissions || []).includes(key));
-  const hasBanPermission = isOwner || (currentRole?.permissions || []).includes("ban_users");
+  const hasModerationPermission = isOwner || moderationKeys.some((key) => currentPermissions.has(key));
+  const hasBanPermission = isOwner || currentPermissions.has("ban_users");
 
   const logModerationAction = useCallback(
     async (
@@ -447,6 +540,22 @@ const ServerSettingsPage = () => {
       setServerName(server.name);
       setDiscoverable(server.is_discoverable);
       setOwnerGroupName(server.owner_group_name || "Owner");
+      setOwnerRoleIcon(server.owner_role_icon || "");
+      setOwnerRoleColor(server.owner_role_color || "#f59e0b");
+      setOwnerRoleUsernameColor(server.owner_role_username_color || "");
+      setOwnerRoleUsernameStyle(
+        server.owner_role_username_style === "normal" ||
+          server.owner_role_username_style === "italic" ||
+          server.owner_role_username_style === "underline"
+          ? server.owner_role_username_style
+          : "bold",
+      );
+      setOwnerRoleUsernameEffect(
+        server.owner_role_username_effect === "none" ||
+          server.owner_role_username_effect === "shadow"
+          ? server.owner_role_username_effect
+          : "glow",
+      );
       setOnboardingWelcomeTitle(server.onboarding_welcome_title || "Welcome!");
       setOnboardingWelcomeMessage(server.onboarding_welcome_message || "Please review and accept the server rules to continue.");
       setOnboardingRulesText(server.onboarding_rules_text || "Be respectful. No harassment. Follow server topic guidelines.");
@@ -499,16 +608,34 @@ const ServerSettingsPage = () => {
     setRolesLoaded(false);
     const { data } = await supabase
       .from("server_roles")
-      .select("id, name, color, position, permissions")
+      .select("id, name, color, position, permissions, icon, username_color, username_style, username_effect")
       .eq("server_id", serverId)
       .order("position", { ascending: false })
       .order("created_at", { ascending: true });
-    const mapped = (data || []).map((role: { id: string; name: string; color: string; position: number; permissions: unknown }) => ({
+    const mapped = (data || []).map((role: {
+      id: string;
+      name: string;
+      color: string;
+      position: number;
+      permissions: unknown;
+      icon: string | null;
+      username_color: string | null;
+      username_style: string | null;
+      username_effect: string | null;
+    }) => ({
       id: role.id,
       name: role.name,
       color: role.color,
       position: role.position,
       permissions: Array.isArray(role.permissions) ? role.permissions.filter((p: unknown): p is string => typeof p === "string") : [],
+      icon: role.icon || null,
+      username_color: role.username_color || null,
+      username_style: role.username_style === "bold" || role.username_style === "italic" || role.username_style === "underline"
+        ? role.username_style
+        : "normal",
+      username_effect: role.username_effect === "glow" || role.username_effect === "shadow"
+        ? role.username_effect
+        : "none",
     })) as ServerRole[];
     setRoles(mapped);
     setSelectedRoleId((prev) => prev || mapped[0]?.id || null);
@@ -919,25 +1046,91 @@ const ServerSettingsPage = () => {
     await refreshChannels();
   };
 
-  const handleRoleChange = async (memberId: string, role: string) => {
+  const handleMemberRolesChange = async (memberId: string, roleNames: string[]) => {
+    if (!serverId || !user?.id) return;
+    const sortedRoleNames = sortRoleNamesByPriority(roleNames);
+    if (sortedRoleNames.length === 0) {
+      alert("A member must have at least one role.");
+      return;
+    }
+    const primaryRole = roleByName.get(normalizeRoleName(sortedRoleNames[0]));
+    if (!primaryRole) {
+      alert("Unable to resolve selected roles.");
+      return;
+    }
+    const extraRoleIds = sortedRoleNames
+      .slice(1)
+      .map((roleName) => roleByName.get(normalizeRoleName(roleName))?.id)
+      .filter((roleId): roleId is string => !!roleId);
+    const existingPersistentGrants = temporaryRoleGrants.filter((grant) => grant.user_id === memberId && !grant.expires_at);
+    const existingRoleIdSet = new Set(existingPersistentGrants.map((grant) => grant.role_id));
+    const desiredRoleIdSet = new Set(extraRoleIds);
+    const grantsToDelete = existingPersistentGrants.filter((grant) => !desiredRoleIdSet.has(grant.role_id));
+    const grantsToInsert = extraRoleIds.filter((roleId) => !existingRoleIdSet.has(roleId));
+
     setUpdatingRoleUserId(memberId);
-    const previousRole = members.find((m) => m.id === memberId)?.role || null;
-    const { error } = await supabase
+    const previousMember = members.find((m) => m.id === memberId) || null;
+    const previousRoles = previousMember ? getMemberAssignedRoleNames(previousMember) : [];
+
+    const { error: membershipError } = await supabase
       .from("server_members")
-      .update({ role })
+      .update({ role: primaryRole.name })
       .eq("server_id", server.id)
       .eq("user_id", memberId);
-    if (error) {
-      alert(`Failed to update role: ${error.message}`);
+    if (membershipError) {
+      alert(`Failed to update roles: ${membershipError.message}`);
       setUpdatingRoleUserId(null);
       return;
     }
-    setMembers((prev) => prev.map((m) => (m.id === memberId ? { ...m, role } : m)));
+
+    if (grantsToDelete.length > 0) {
+      const { error: deleteGrantError } = await (supabase as any)
+        .from("server_temporary_role_grants")
+        .delete()
+        .in("id", grantsToDelete.map((grant) => grant.id));
+      if (deleteGrantError) {
+        alert(`Failed to update roles: ${deleteGrantError.message}`);
+        setUpdatingRoleUserId(null);
+        await loadTemporaryRoleGrants();
+        return;
+      }
+    }
+
+    let insertedGrants: TemporaryRoleGrantItem[] = [];
+    if (grantsToInsert.length > 0) {
+      const { data: insertedRows, error: insertGrantError } = await (supabase as any)
+        .from("server_temporary_role_grants")
+        .insert(
+          grantsToInsert.map((roleId) => ({
+            server_id: server.id,
+            user_id: memberId,
+            role_id: roleId,
+            granted_by: user.id,
+            expires_at: null,
+          })),
+        )
+        .select("id, user_id, role_id, granted_by, created_at, expires_at");
+      if (insertGrantError) {
+        alert(`Failed to update roles: ${insertGrantError.message}`);
+        setUpdatingRoleUserId(null);
+        await loadTemporaryRoleGrants();
+        return;
+      }
+      insertedGrants = (insertedRows || []) as TemporaryRoleGrantItem[];
+    }
+
+    setMembers((prev) => prev.map((m) => (m.id === memberId ? { ...m, role: primaryRole.name } : m)));
+    setTemporaryRoleGrants((prev) => {
+      const deletedIds = new Set(grantsToDelete.map((grant) => grant.id));
+      const next = prev.filter((grant) => !deletedIds.has(grant.id));
+      return [...next, ...insertedGrants];
+    });
+
     await logModerationAction("edit_member_role", {
       targetUserId: memberId,
       metadata: {
-        previous_role: previousRole,
-        next_role: role,
+        previous_roles: previousRoles,
+        next_roles: sortedRoleNames,
       },
     });
     setUpdatingRoleUserId(null);
@@ -956,8 +1149,12 @@ const ServerSettingsPage = () => {
         color: newRoleColor,
         position: nextPosition,
         permissions: [],
+        icon: newRoleIcon.trim() || null,
+        username_color: newRoleUsernameColor || null,
+        username_style: newRoleUsernameStyle,
+        username_effect: newRoleUsernameEffect,
       })
-      .select("id, name, color, position, permissions")
+      .select("id, name, color, position, permissions, icon, username_color, username_style, username_effect")
       .single();
     setCreatingRole(false);
     if (error) {
@@ -971,11 +1168,23 @@ const ServerSettingsPage = () => {
         color: data.color,
         position: data.position,
         permissions: Array.isArray(data.permissions) ? data.permissions.filter((p): p is string => typeof p === "string") : [],
+        icon: data.icon || null,
+        username_color: data.username_color || null,
+        username_style: data.username_style === "bold" || data.username_style === "italic" || data.username_style === "underline"
+          ? data.username_style
+          : "normal",
+        username_effect: data.username_effect === "glow" || data.username_effect === "shadow"
+          ? data.username_effect
+          : "none",
       };
       setRoles((prev) => [createdRole, ...prev]);
       setSelectedRoleId(createdRole.id);
     }
     setNewRoleName("");
+    setNewRoleIcon("");
+    setNewRoleUsernameColor("");
+    setNewRoleUsernameStyle("normal");
+    setNewRoleUsernameEffect("none");
   };
 
   const handleDeleteRole = async (roleToDelete: ServerRole) => {
@@ -1007,6 +1216,7 @@ const ServerSettingsPage = () => {
 
     setRoles((prev) => prev.filter((r) => r.id !== roleToDelete.id));
     setMembers((prev) => prev.map((m) => (m.role === roleToDelete.name ? { ...m, role: fallbackRole.name } : m)));
+    setTemporaryRoleGrants((prev) => prev.filter((grant) => grant.role_id !== roleToDelete.id));
     if (selectedRoleId === roleToDelete.id) setSelectedRoleId(fallbackRole.id);
   };
 
@@ -1032,6 +1242,42 @@ const ServerSettingsPage = () => {
     }
 
     setRoles((prev) => prev.map((role) => (role.id === roleId ? { ...role, permissions: nextPermissions } : role)));
+  };
+
+  const handleSaveRoleAppearance = async () => {
+    const targetRoleId = roleEditorTarget?.type === "role" ? roleEditorTarget.id : selectedRole?.id;
+    if (!targetRoleId || !serverId || savingRoleAppearanceId) return;
+    setSavingRoleAppearanceId(targetRoleId);
+    const nextIcon = roleAppearanceDraft.icon.trim() || null;
+    const nextUsernameColor = roleAppearanceDraft.usernameColor || null;
+    const { error } = await supabase
+      .from("server_roles")
+      .update({
+        icon: nextIcon,
+        username_color: nextUsernameColor,
+        username_style: roleAppearanceDraft.usernameStyle,
+        username_effect: roleAppearanceDraft.usernameEffect,
+      })
+      .eq("id", targetRoleId)
+      .eq("server_id", serverId);
+    setSavingRoleAppearanceId(null);
+    if (error) {
+      alert(`Failed to update role appearance: ${error.message}`);
+      return;
+    }
+    setRoles((prev) =>
+      prev.map((role) =>
+        role.id === targetRoleId
+          ? {
+              ...role,
+              icon: nextIcon,
+              username_color: nextUsernameColor,
+              username_style: roleAppearanceDraft.usernameStyle,
+              username_effect: roleAppearanceDraft.usernameEffect,
+            }
+          : role,
+      ),
+    );
   };
 
   const handleMoveRole = async (roleId: string, direction: "up" | "down") => {
@@ -1213,6 +1459,10 @@ const ServerSettingsPage = () => {
           color: role.color,
           position: role.position,
           permissions: [...role.permissions],
+          icon: role.icon || null,
+          username_color: role.username_color || null,
+          username_style: role.username_style,
+          username_effect: role.username_effect,
         })),
     };
 
@@ -1289,6 +1539,10 @@ const ServerSettingsPage = () => {
             color: role.color,
             position: role.position,
             permissions: role.permissions,
+            icon: role.icon || null,
+            username_color: role.username_color || null,
+            username_style: role.username_style || "normal",
+            username_effect: role.username_effect || "none",
           })
           .eq("id", existing.id)
           .eq("server_id", serverId);
@@ -1305,6 +1559,10 @@ const ServerSettingsPage = () => {
             color: role.color,
             position: role.position,
             permissions: role.permissions,
+            icon: role.icon || null,
+            username_color: role.username_color || null,
+            username_style: role.username_style || "normal",
+            username_effect: role.username_effect || "none",
           });
         if (error) {
           failedMessage = `Failed to create role "${role.name}": ${error.message}`;
@@ -1371,9 +1629,26 @@ const ServerSettingsPage = () => {
               permissions: Array.isArray(row.permissions)
                 ? row.permissions.filter((permission): permission is string => typeof permission === "string")
                 : [],
+              icon: typeof row.icon === "string" ? row.icon : null,
+              username_color: typeof row.username_color === "string" ? row.username_color : null,
+              username_style: row.username_style === "bold" || row.username_style === "italic" || row.username_style === "underline"
+                ? row.username_style
+                : "normal",
+              username_effect: row.username_effect === "glow" || row.username_effect === "shadow"
+                ? row.username_effect
+                : "none",
             };
           })
-          .filter((entry): entry is { name: string; color: string; position: number; permissions: string[] } => !!entry)
+          .filter((entry): entry is {
+            name: string;
+            color: string;
+            position: number;
+            permissions: string[];
+            icon: string | null;
+            username_color: string | null;
+            username_style: RoleTextStyle;
+            username_effect: RoleTextEffect;
+          } => !!entry)
       : [];
 
     if (parsedRoles.length === 0) {
@@ -1409,9 +1684,17 @@ const ServerSettingsPage = () => {
     const cleanName = ownerGroupName.trim();
     if (!cleanName) return;
     setSavingOwnerGroup(true);
+    const ownerUsernameColor = ownerRoleUsernameColor || null;
     const { error } = await supabase
       .from("servers")
-      .update({ owner_group_name: cleanName })
+      .update({
+        owner_group_name: cleanName,
+        owner_role_icon: ownerRoleIcon.trim() || null,
+        owner_role_color: ownerRoleColor,
+        owner_role_username_color: ownerUsernameColor,
+        owner_role_username_style: ownerRoleUsernameStyle,
+        owner_role_username_effect: ownerRoleUsernameEffect,
+      })
       .eq("id", server.id);
     setSavingOwnerGroup(false);
     if (error) {
@@ -1419,6 +1702,17 @@ const ServerSettingsPage = () => {
       return;
     }
     await refreshServers();
+  };
+
+  const openOwnerRoleEditor = () => {
+    setRoleEditorTarget({ type: "owner" });
+    setRoleEditorOpen(true);
+  };
+
+  const openServerRoleEditor = (role: ServerRole) => {
+    setSelectedRoleId(role.id);
+    setRoleEditorTarget({ type: "role", id: role.id });
+    setRoleEditorOpen(true);
   };
 
   const loadBans = useCallback(async () => {
@@ -1895,39 +2189,74 @@ const ServerSettingsPage = () => {
     ...(isOwner ? [{ id: "roles" as const, label: "Roles", icon: Users }] : []),
   ];
 
-  const roleOptions = Array.from(
-    new Set([
-      ...roles.map((r) => r.name),
-      ...members.filter((m) => m.role !== "owner").map((m) => m.role),
-    ]),
-  );
+  const roleOptions = roles.map((role) => role.name);
   const selectedRole = roles.find((role) => role.id === selectedRoleId) || null;
+  const ownerRoleStyleNormalized =
+    server?.owner_role_username_style === "normal" ||
+    server?.owner_role_username_style === "italic" ||
+    server?.owner_role_username_style === "underline"
+      ? server.owner_role_username_style
+      : "bold";
+  const ownerRoleEffectNormalized =
+    server?.owner_role_username_effect === "none" ||
+    server?.owner_role_username_effect === "shadow"
+      ? server.owner_role_username_effect
+      : "glow";
+  const ownerConfigDirty = !!server && (
+    ownerGroupName.trim() !== (server.owner_group_name || "Owner") ||
+    (ownerRoleIcon.trim() || "") !== (server.owner_role_icon || "") ||
+    ownerRoleColor !== (server.owner_role_color || "#f59e0b") ||
+    (ownerRoleUsernameColor || "") !== (server.owner_role_username_color || "") ||
+    ownerRoleUsernameStyle !== ownerRoleStyleNormalized ||
+    ownerRoleUsernameEffect !== ownerRoleEffectNormalized
+  );
+  useEffect(() => {
+    if (!selectedRole) {
+      setRoleAppearanceDraft({
+        icon: "",
+        usernameColor: "",
+        usernameStyle: "normal",
+        usernameEffect: "none",
+      });
+      return;
+    }
+    setRoleAppearanceDraft({
+      icon: selectedRole.icon || "",
+      usernameColor: selectedRole.username_color || "",
+      usernameStyle: selectedRole.username_style || "normal",
+      usernameEffect: selectedRole.username_effect || "none",
+    });
+  }, [selectedRole]);
   const selectedRoleOverrides = selectedRole
     ? rolePermissionOverrides.filter((override) => override.role_id === selectedRole.id)
     : [];
+  const roleEditorRole = roleEditorTarget?.type === "role"
+    ? roles.find((role) => role.id === roleEditorTarget.id) || null
+    : null;
   const overrideScopeOptions = overrideScopeType === "channel" ? channels : channelGroups;
-  const roleById = useMemo(() => new Map(roles.map((role) => [role.id, role])), [roles]);
   const serverOwnerId = server?.owner_id || null;
   const filteredMembers = members.filter((member) => {
     const q = memberSearch.trim().toLowerCase();
     if (!q) return true;
+    const assignedRoles = getMemberAssignedRoleNames(member).join(" ").toLowerCase();
     return (
       member.display_name.toLowerCase().includes(q) ||
       member.username.toLowerCase().includes(q) ||
-      member.role.toLowerCase().includes(q)
+      assignedRoles.includes(q)
     );
   });
   const memberById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
   const nonOwnerMembers = members.filter((member) => member.id !== serverOwnerId);
-  const activeTemporaryRoleGrants = temporaryRoleGrants.filter((grant) => !grant.expires_at || new Date(grant.expires_at).getTime() > Date.now());
+  const activeTemporaryRoleGrants = temporaryRoleGrants.filter(
+    (grant) => !!grant.expires_at && new Date(grant.expires_at).getTime() > Date.now(),
+  );
   const modAssignableMembers = useMemo(() => {
-    const roleByName = new Map(roles.map((r) => [r.name.toLowerCase(), r]));
     return members.filter((member) => {
       if (serverOwnerId && member.id === serverOwnerId) return true;
-      const role = roleByName.get(member.role.toLowerCase());
-      return !!role?.permissions?.includes("mod_menu");
+      const memberRoleNames = sortRoleNamesByPriority([member.role, ...(activeAssignedRoleNamesByUser.get(member.id) || [])]);
+      return memberRoleNames.some((roleName) => roleByName.get(normalizeRoleName(roleName))?.permissions?.includes("mod_menu"));
     });
-  }, [members, roles, serverOwnerId]);
+  }, [activeAssignedRoleNamesByUser, members, roleByName, serverOwnerId, sortRoleNamesByPriority]);
 
   const getBanLengthLabel = (ban: BanListItem) => {
     if (!ban.expires_at) return "Permanent";
@@ -2478,38 +2807,23 @@ const ServerSettingsPage = () => {
 
         {tab === "roles" && (
           <div className="max-w-2xl space-y-4">
-            <div className="rounded-md border border-border/60 p-3 bg-secondary/20">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Owner Group (Fixed Top)</p>
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input
-                  value={ownerGroupName}
-                  onChange={(e) => setOwnerGroupName(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && void handleSaveOwnerGroupName()}
-                  placeholder="Owner group name"
-                  className="flex-1 px-3 py-2 rounded-md bg-background border border-border text-sm outline-none focus:ring-2 focus:ring-primary/50"
-                />
-                <button
-                  onClick={() => void handleSaveOwnerGroupName()}
-                  disabled={!ownerGroupName.trim() || ownerGroupName.trim() === (server.owner_group_name || "Owner") || savingOwnerGroup}
-                  className="px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm disabled:opacity-50"
-                >
-                  {savingOwnerGroup ? "Saving..." : "Save"}
-                </button>
-              </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                This group is always pinned to the top in the member sidebar and cannot be deleted or reordered.
-              </p>
-            </div>
 
             <div className="rounded-md border border-border/60 p-3 bg-secondary/20">
               <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Create Role</p>
-              <div className="flex flex-col sm:flex-row gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-6 gap-2">
                 <input
                   value={newRoleName}
                   onChange={(e) => setNewRoleName(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && void handleCreateRole()}
                   placeholder="Role name"
-                  className="flex-1 px-3 py-2 rounded-md bg-background border border-border text-sm outline-none focus:ring-2 focus:ring-primary/50"
+                  className="sm:col-span-2 px-3 py-2 rounded-md bg-background border border-border text-sm outline-none focus:ring-2 focus:ring-primary/50"
+                />
+                <input
+                  value={newRoleIcon}
+                  onChange={(e) => setNewRoleIcon(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && void handleCreateRole()}
+                  placeholder="Icon (e.g. ★)"
+                  className="px-3 py-2 rounded-md bg-background border border-border text-sm outline-none focus:ring-2 focus:ring-primary/50"
                 />
                 <input
                   type="color"
@@ -2518,10 +2832,36 @@ const ServerSettingsPage = () => {
                   className="h-10 w-12 rounded-md border border-border bg-background"
                   title="Role color"
                 />
+                <input
+                  type="color"
+                  value={newRoleUsernameColor || "#9ca3af"}
+                  onChange={(e) => setNewRoleUsernameColor(e.target.value)}
+                  className="h-10 w-12 rounded-md border border-border bg-background"
+                  title="Username color"
+                />
+                <select
+                  value={newRoleUsernameStyle}
+                  onChange={(e) => setNewRoleUsernameStyle(e.target.value as RoleTextStyle)}
+                  className="px-2 py-2 rounded-md bg-background border border-border text-sm"
+                >
+                  <option value="normal">Normal</option>
+                  <option value="bold">Bold</option>
+                  <option value="italic">Italic</option>
+                  <option value="underline">Underline</option>
+                </select>
+                <select
+                  value={newRoleUsernameEffect}
+                  onChange={(e) => setNewRoleUsernameEffect(e.target.value as RoleTextEffect)}
+                  className="px-2 py-2 rounded-md bg-background border border-border text-sm"
+                >
+                  <option value="none">No Effect</option>
+                  <option value="glow">Glow</option>
+                  <option value="shadow">Shadow</option>
+                </select>
                 <button
                   onClick={() => void handleCreateRole()}
                   disabled={!newRoleName.trim() || creatingRole}
-                  className="px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm disabled:opacity-50"
+                  className="sm:col-span-6 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm disabled:opacity-50"
                 >
                   Add Role
                 </button>
@@ -2531,6 +2871,20 @@ const ServerSettingsPage = () => {
             <div className="rounded-md border border-border/60 p-3 bg-secondary/20">
               <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Existing Roles</p>
               <div className="space-y-2">
+                <div className="w-full px-3 py-2 rounded-md border bg-background/70 border-border/60 flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="w-3 h-3 rounded-full" style={{ backgroundColor: ownerRoleColor }} />
+                    {ownerRoleIcon ? <span className="text-xs">{ownerRoleIcon}</span> : null}
+                    <span className="text-sm">{ownerGroupName.trim() || "Owner"}</span>
+                    <span className="text-xs text-muted-foreground">(Owner)</span>
+                  </div>
+                  <button
+                    onClick={openOwnerRoleEditor}
+                    className="text-xs px-2 py-1 rounded bg-secondary text-secondary-foreground"
+                  >
+                    Edit
+                  </button>
+                </div>
                 {roles.map((role) => (
                   <div
                     key={role.id}
@@ -2546,10 +2900,17 @@ const ServerSettingsPage = () => {
                         className="flex items-center gap-2 text-sm hover:opacity-90"
                       >
                         <span className="w-3 h-3 rounded-full" style={{ backgroundColor: role.color }} />
+                        {role.icon ? <span className="text-xs">{role.icon}</span> : null}
                         <span>{role.name}</span>
                       </button>
                     </div>
                     <div className="flex items-center gap-2 flex-wrap justify-end">
+                      <button
+                        onClick={() => openServerRoleEditor(role)}
+                        className="text-xs px-2 py-1 rounded bg-secondary text-secondary-foreground"
+                      >
+                        Edit
+                      </button>
                       <button
                         onClick={() => void handleMoveRole(role.id, "up")}
                         disabled={reorderingRoleId !== null || roles[0]?.id === role.id}
@@ -2580,28 +2941,104 @@ const ServerSettingsPage = () => {
               </div>
             </div>
 
-            {selectedRole && (
-              <div className="rounded-md border border-border/60 p-3 bg-secondary/20">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
-                  Role Permissions: <span className="text-foreground normal-case">{selectedRole.name}</span>
+
+            {false && selectedRole && (
+              <div className="rounded-md border border-border/60 p-3 bg-secondary/20 space-y-3">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Role Appearance: <span className="text-foreground normal-case">{selectedRole.name}</span>
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {ROLE_PERMISSION_OPTIONS.map((perm) => {
-                    const enabled = selectedRole.permissions.includes(perm.key);
-                    return (
-                      <label key={perm.key} className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-background/70 border border-border/60 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={enabled}
-                          onChange={() => void handleToggleRolePermission(selectedRole.id, perm.key)}
-                          disabled={updatingRolePermissionsId === selectedRole.id}
-                          className="rounded border-border"
-                        />
-                        <span>{perm.label}</span>
-                      </label>
-                    );
-                  })}
+                  <label className="text-xs text-muted-foreground">
+                    Role Icon
+                    <input
+                      value={roleAppearanceDraft.icon}
+                      onChange={(e) => setRoleAppearanceDraft((prev) => ({ ...prev, icon: e.target.value }))}
+                      className="mt-1 w-full px-2 py-2 rounded-md bg-background border border-border text-sm"
+                      placeholder="e.g. ★"
+                    />
+                  </label>
+                  <label className="text-xs text-muted-foreground">
+                    Username Color
+                    <div className="mt-1 flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={roleAppearanceDraft.usernameColor || selectedRole.color || "#9ca3af"}
+                        onChange={(e) => setRoleAppearanceDraft((prev) => ({ ...prev, usernameColor: e.target.value }))}
+                        className="h-9 w-12 rounded-md border border-border bg-background"
+                      />
+                      <button
+                        onClick={() => setRoleAppearanceDraft((prev) => ({ ...prev, usernameColor: "" }))}
+                        className="px-2 py-1 rounded bg-secondary text-secondary-foreground text-xs"
+                      >
+                        Use Role Color
+                      </button>
+                    </div>
+                  </label>
+                  <label className="text-xs text-muted-foreground">
+                    Username Style
+                    <select
+                      value={roleAppearanceDraft.usernameStyle}
+                      onChange={(e) => setRoleAppearanceDraft((prev) => ({ ...prev, usernameStyle: e.target.value as RoleTextStyle }))}
+                      className="mt-1 w-full px-2 py-2 rounded-md bg-background border border-border text-sm"
+                    >
+                      <option value="normal">Normal</option>
+                      <option value="bold">Bold</option>
+                      <option value="italic">Italic</option>
+                      <option value="underline">Underline</option>
+                    </select>
+                  </label>
+                  <label className="text-xs text-muted-foreground">
+                    Username Effect
+                    <select
+                      value={roleAppearanceDraft.usernameEffect}
+                      onChange={(e) => setRoleAppearanceDraft((prev) => ({ ...prev, usernameEffect: e.target.value as RoleTextEffect }))}
+                      className="mt-1 w-full px-2 py-2 rounded-md bg-background border border-border text-sm"
+                    >
+                      <option value="none">No Effect</option>
+                      <option value="glow">Glow</option>
+                      <option value="shadow">Shadow</option>
+                    </select>
+                  </label>
                 </div>
+                <div className="rounded-md border border-border/60 bg-background/70 p-2.5">
+                  <p className="text-[11px] text-muted-foreground mb-1">Preview</p>
+                  <p
+                    className={`text-sm ${getRoleNamePresentation({
+                      role_color: selectedRole.color,
+                      role_username_color: roleAppearanceDraft.usernameColor || null,
+                      role_username_style: roleAppearanceDraft.usernameStyle,
+                      role_username_effect: roleAppearanceDraft.usernameEffect,
+                    }).className}`}
+                    style={getRoleNamePresentation({
+                      role_color: selectedRole.color,
+                      role_username_color: roleAppearanceDraft.usernameColor || null,
+                      role_username_style: roleAppearanceDraft.usernameStyle,
+                      role_username_effect: roleAppearanceDraft.usernameEffect,
+                    }).style}
+                  >
+                    {selectedRole.name} Username
+                  </p>
+                  <RoleBadges
+                    className="mt-2"
+                    badges={[{
+                      id: selectedRole.id,
+                      name: selectedRole.name,
+                      color: selectedRole.color,
+                      icon: roleAppearanceDraft.icon.trim() || null,
+                      username_color: roleAppearanceDraft.usernameColor || null,
+                      username_style: roleAppearanceDraft.usernameStyle,
+                      username_effect: roleAppearanceDraft.usernameEffect,
+                      position: selectedRole.position,
+                    }]}
+                  />
+                </div>
+                <button
+                  onClick={() => void handleSaveRoleAppearance()}
+                  disabled={savingRoleAppearanceId === selectedRole.id}
+                  className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs disabled:opacity-50"
+                >
+                  {savingRoleAppearanceId === selectedRole.id ? "Saving..." : "Save Appearance"}
+                </button>
               </div>
             )}
 
@@ -2761,133 +3198,198 @@ const ServerSettingsPage = () => {
               ))}
             </div>
 
-            <div className="rounded-md border border-border/60 p-3 bg-secondary/20 space-y-2">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Role Templates (Import / Export)</p>
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input
-                  value={templateName}
-                  onChange={(e) => setTemplateName(e.target.value)}
-                  placeholder="Template name (optional)"
-                  className="flex-1 px-3 py-2 rounded-md bg-background border border-border text-sm"
-                />
-                <button
-                  onClick={() => void handleSaveRoleTemplate()}
-                  disabled={savingRoleTemplate}
-                  className="px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs disabled:opacity-50"
-                >
-                  {savingRoleTemplate ? "Saving..." : "Save Current Roles"}
-                </button>
-              </div>
-              {loadingRoleTemplates && (
-                <DialogListSkeleton rows={3} />
-              )}
-              {!loadingRoleTemplates && roleTemplates.length === 0 && (
-                <p className="text-xs text-muted-foreground">No templates yet.</p>
-              )}
-              {!loadingRoleTemplates && roleTemplates.map((template) => (
-                <div key={template.id} className="rounded-md border border-border/60 bg-background/70 px-2 py-1.5 text-xs space-y-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-foreground font-medium">{template.name}</p>
-                    <p className="text-muted-foreground">{new Date(template.updated_at).toLocaleString()}</p>
-                  </div>
-                  <p className="text-muted-foreground">{template.definition.roles.length} roles</p>
-                  <div className="flex items-center gap-2 flex-wrap justify-end">
-                    <button
-                      onClick={() => void handleApplyRoleTemplate(template)}
-                      disabled={applyingRoleTemplateId === template.id}
-                      className="px-2 py-0.5 rounded bg-primary text-primary-foreground disabled:opacity-50"
-                    >
-                      {applyingRoleTemplateId === template.id ? "Applying..." : "Apply"}
-                    </button>
-                    <button
-                      onClick={() => void handleExportRoleTemplate(template)}
-                      className="px-2 py-0.5 rounded bg-secondary text-secondary-foreground"
-                    >
-                      Export
-                    </button>
-                    <button
-                      onClick={() => void handleDeleteRoleTemplate(template.id)}
-                      disabled={deletingRoleTemplateId === template.id}
-                      className="px-2 py-0.5 rounded bg-destructive/10 text-destructive disabled:opacity-50"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))}
-              <textarea
-                value={templateImportJson}
-                onChange={(e) => setTemplateImportJson(e.target.value)}
-                rows={5}
-                placeholder='Import JSON, e.g. {"name":"Moderation Set","roles":[...]}'
-                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs"
-              />
+            <div className="rounded-md border border-border/60 p-1 bg-secondary/20 inline-flex items-center gap-1">
               <button
-                onClick={() => void handleImportRoleTemplate()}
-                disabled={!templateImportJson.trim() || savingRoleTemplate}
-                className="px-3 py-1.5 rounded-md bg-secondary text-secondary-foreground text-xs disabled:opacity-50"
+                onClick={() => setRolesSubtab("manageUsers")}
+                className={`text-xs px-3 py-1.5 rounded transition-colors ${
+                  rolesSubtab === "manageUsers"
+                    ? "bg-background text-foreground border border-border/70"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
               >
-                Import Template JSON
+                Manage Users
               </button>
-              <textarea
-                value={exportedTemplateJson}
-                onChange={(e) => setExportedTemplateJson(e.target.value)}
-                rows={5}
-                placeholder="Exported template JSON appears here"
-                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs"
-              />
+              <button
+                onClick={() => setRolesSubtab("templates")}
+                className={`text-xs px-3 py-1.5 rounded transition-colors ${
+                  rolesSubtab === "templates"
+                    ? "bg-background text-foreground border border-border/70"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Templates
+              </button>
             </div>
 
-            <div className="space-y-2">
-              <div className="relative">
-                <Search className="w-4 h-4 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" />
-                <input
-                  value={memberSearch}
-                  onChange={(e) => setMemberSearch(e.target.value)}
-                  placeholder="Search users by name, username, or role"
-                  className="w-full pl-8 pr-3 py-2 rounded-md bg-background border border-border text-sm outline-none focus:ring-2 focus:ring-primary/50"
+            {rolesSubtab === "templates" && (
+              <div className="rounded-md border border-border/60 p-3 bg-secondary/20 space-y-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Role Templates (Import / Export)</p>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    value={templateName}
+                    onChange={(e) => setTemplateName(e.target.value)}
+                    placeholder="Template name (optional)"
+                    className="flex-1 px-3 py-2 rounded-md bg-background border border-border text-sm"
+                  />
+                  <button
+                    onClick={() => void handleSaveRoleTemplate()}
+                    disabled={savingRoleTemplate}
+                    className="px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs disabled:opacity-50"
+                  >
+                    {savingRoleTemplate ? "Saving..." : "Save Current Roles"}
+                  </button>
+                </div>
+                {loadingRoleTemplates && (
+                  <DialogListSkeleton rows={3} />
+                )}
+                {!loadingRoleTemplates && roleTemplates.length === 0 && (
+                  <p className="text-xs text-muted-foreground">No templates yet.</p>
+                )}
+                {!loadingRoleTemplates && roleTemplates.map((template) => (
+                  <div key={template.id} className="rounded-md border border-border/60 bg-background/70 px-2 py-1.5 text-xs space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-foreground font-medium">{template.name}</p>
+                      <p className="text-muted-foreground">{new Date(template.updated_at).toLocaleString()}</p>
+                    </div>
+                    <p className="text-muted-foreground">{template.definition.roles.length} roles</p>
+                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                      <button
+                        onClick={() => void handleApplyRoleTemplate(template)}
+                        disabled={applyingRoleTemplateId === template.id}
+                        className="px-2 py-0.5 rounded bg-primary text-primary-foreground disabled:opacity-50"
+                      >
+                        {applyingRoleTemplateId === template.id ? "Applying..." : "Apply"}
+                      </button>
+                      <button
+                        onClick={() => void handleExportRoleTemplate(template)}
+                        className="px-2 py-0.5 rounded bg-secondary text-secondary-foreground"
+                      >
+                        Export
+                      </button>
+                      <button
+                        onClick={() => void handleDeleteRoleTemplate(template.id)}
+                        disabled={deletingRoleTemplateId === template.id}
+                        className="px-2 py-0.5 rounded bg-destructive/10 text-destructive disabled:opacity-50"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                <textarea
+                  value={templateImportJson}
+                  onChange={(e) => setTemplateImportJson(e.target.value)}
+                  rows={5}
+                  placeholder='Import JSON, e.g. {"name":"Moderation Set","roles":[...]}'
+                  className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+                />
+                <button
+                  onClick={() => void handleImportRoleTemplate()}
+                  disabled={!templateImportJson.trim() || savingRoleTemplate}
+                  className="px-3 py-1.5 rounded-md bg-secondary text-secondary-foreground text-xs disabled:opacity-50"
+                >
+                  Import Template JSON
+                </button>
+                <textarea
+                  value={exportedTemplateJson}
+                  onChange={(e) => setExportedTemplateJson(e.target.value)}
+                  rows={5}
+                  placeholder="Exported template JSON appears here"
+                  className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs"
                 />
               </div>
-              {filteredMembers.map((member) => {
-                const isServerOwner = member.id === server.owner_id;
-                const initials = member.display_name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
-                return (
-                  <div key={member.id} className="px-3 py-2 rounded-md bg-secondary/50 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2 min-w-0">
-                      {member.avatar_url ? (
-                        <img src={member.avatar_url} alt={member.display_name} className="w-8 h-8 rounded-full object-cover" />
+            )}
+
+            {rolesSubtab === "manageUsers" && (
+              <div className="space-y-2">
+                <div className="relative">
+                  <Search className="w-4 h-4 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    value={memberSearch}
+                    onChange={(e) => setMemberSearch(e.target.value)}
+                    placeholder="Search users by name, username, or role"
+                    className="w-full pl-8 pr-3 py-2 rounded-md bg-background border border-border text-sm outline-none focus:ring-2 focus:ring-primary/50"
+                  />
+                </div>
+                {filteredMembers.map((member) => {
+                  const isServerOwner = member.id === server.owner_id;
+                  const initials = member.display_name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+                  const assignedRoleNames = getMemberAssignedRoleNames(member);
+                  const assignedBadges = assignedRoleNames
+                    .map((roleName) => roleByName.get(normalizeRoleName(roleName)))
+                    .filter((role): role is ServerRole => !!role)
+                    .map((role) => ({
+                      id: role.id,
+                      name: role.name,
+                      color: role.color,
+                      icon: role.icon,
+                      username_color: role.username_color,
+                      username_style: role.username_style,
+                      username_effect: role.username_effect,
+                      position: role.position,
+                    }));
+                  const highestRole = assignedBadges[0] || null;
+                  const highestRoleNameStyle = getRoleNamePresentation({
+                    role_color: highestRole?.color || null,
+                    role_username_color: highestRole?.username_color || null,
+                    role_username_style: highestRole?.username_style || null,
+                    role_username_effect: highestRole?.username_effect || null,
+                  });
+                  return (
+                    <div key={member.id} className="px-3 py-2 rounded-md bg-secondary/50 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {member.avatar_url ? (
+                          <img src={member.avatar_url} alt={member.display_name} className="w-8 h-8 rounded-full object-cover" />
+                        ) : (
+                          <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-xs font-semibold text-foreground">
+                            {initials}
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className={`text-sm font-medium truncate ${highestRoleNameStyle.className}`.trim()} style={highestRoleNameStyle.style}>
+                            {member.display_name}
+                          </p>
+                          <p className="text-xs text-muted-foreground truncate">@{member.username}</p>
+                          <RoleBadges badges={assignedBadges} className="mt-1" />
+                        </div>
+                      </div>
+                      {isServerOwner ? (
+                        <span className="inline-flex items-center gap-1 text-xs text-primary">
+                          <Shield className="w-3 h-3" />
+                          Owner
+                        </span>
                       ) : (
-                        <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-xs font-semibold text-foreground">
-                          {initials}
+                        <div className="flex flex-wrap items-center justify-end gap-1">
+                          {roleOptions.map((roleName) => {
+                            const isSelected = assignedRoleNames.some((name) => normalizeRoleName(name) === normalizeRoleName(roleName));
+                            return (
+                              <button
+                                key={`${member.id}-${roleName}`}
+                                onClick={() => {
+                                  const nextRoles = isSelected
+                                    ? assignedRoleNames.filter((name) => normalizeRoleName(name) !== normalizeRoleName(roleName))
+                                    : [...assignedRoleNames, roleName];
+                                  void handleMemberRolesChange(member.id, nextRoles);
+                                }}
+                                disabled={updatingRoleUserId === member.id || (isSelected && assignedRoleNames.length <= 1)}
+                                className={`px-2 py-1 rounded-md border text-[11px] ${
+                                  isSelected
+                                    ? "bg-background border-primary/50 text-foreground"
+                                    : "bg-background/60 border-border text-muted-foreground"
+                                } disabled:opacity-50`}
+                              >
+                                {roleName}
+                              </button>
+                            );
+                          })}
                         </div>
                       )}
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{member.display_name}</p>
-                        <p className="text-xs text-muted-foreground truncate">@{member.username}</p>
-                      </div>
                     </div>
-                    {isServerOwner ? (
-                      <span className="inline-flex items-center gap-1 text-xs text-primary">
-                        <Shield className="w-3 h-3" />
-                        Owner
-                      </span>
-                    ) : (
-                      <select
-                        value={member.role}
-                        onChange={(e) => handleRoleChange(member.id, e.target.value)}
-                        disabled={updatingRoleUserId === member.id}
-                        className="px-2 py-1 rounded-md bg-background border border-border text-xs capitalize"
-                      >
-                        {roleOptions.map((roleName) => (
-                          <option key={roleName} value={roleName}>{roleName}</option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
-                );
-              })}
-              {filteredMembers.length === 0 && <p className="text-sm text-muted-foreground">No users match your search.</p>}
-            </div>
+                  );
+                })}
+                {filteredMembers.length === 0 && <p className="text-sm text-muted-foreground">No users match your search.</p>}
+              </div>
+            )}
           </div>
         )}
 
@@ -3427,6 +3929,269 @@ const ServerSettingsPage = () => {
             )}
           </div>
         )}
+        <Dialog
+          open={roleEditorOpen}
+          onOpenChange={(open) => {
+            setRoleEditorOpen(open);
+            if (!open) setRoleEditorTarget(null);
+          }}
+        >
+          <DialogContent className="sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>
+                {roleEditorTarget?.type === "owner"
+                  ? "Edit Owner Role"
+                  : roleEditorRole
+                    ? `Edit Role: ${roleEditorRole.name}`
+                    : "Edit Role"}
+              </DialogTitle>
+            </DialogHeader>
+
+            {roleEditorTarget?.type === "owner" && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <label className="text-xs text-muted-foreground">
+                    Owner Role Name
+                    <input
+                      value={ownerGroupName}
+                      onChange={(e) => setOwnerGroupName(e.target.value)}
+                      className="mt-1 w-full px-2 py-2 rounded-md bg-background border border-border text-sm"
+                      placeholder="Owner"
+                    />
+                  </label>
+                  <label className="text-xs text-muted-foreground">
+                    Role Icon
+                    <input
+                      value={ownerRoleIcon}
+                      onChange={(e) => setOwnerRoleIcon(e.target.value)}
+                      className="mt-1 w-full px-2 py-2 rounded-md bg-background border border-border text-sm"
+                      placeholder="e.g. *"
+                    />
+                  </label>
+                  <label className="text-xs text-muted-foreground">
+                    Role Color
+                    <input
+                      type="color"
+                      value={ownerRoleColor}
+                      onChange={(e) => setOwnerRoleColor(e.target.value)}
+                      className="mt-1 h-9 w-12 rounded-md border border-border bg-background"
+                    />
+                  </label>
+                  <label className="text-xs text-muted-foreground">
+                    Username Color
+                    <div className="mt-1 flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={ownerRoleUsernameColor || ownerRoleColor}
+                        onChange={(e) => setOwnerRoleUsernameColor(e.target.value)}
+                        className="h-9 w-12 rounded-md border border-border bg-background"
+                      />
+                      <button
+                        onClick={() => setOwnerRoleUsernameColor("")}
+                        className="px-2 py-1 rounded bg-secondary text-secondary-foreground text-xs"
+                      >
+                        Use Role Color
+                      </button>
+                    </div>
+                  </label>
+                  <label className="text-xs text-muted-foreground">
+                    Username Style
+                    <select
+                      value={ownerRoleUsernameStyle}
+                      onChange={(e) => setOwnerRoleUsernameStyle(e.target.value as RoleTextStyle)}
+                      className="mt-1 w-full px-2 py-2 rounded-md bg-background border border-border text-sm"
+                    >
+                      <option value="normal">Normal</option>
+                      <option value="bold">Bold</option>
+                      <option value="italic">Italic</option>
+                      <option value="underline">Underline</option>
+                    </select>
+                  </label>
+                  <label className="text-xs text-muted-foreground">
+                    Username Effect
+                    <select
+                      value={ownerRoleUsernameEffect}
+                      onChange={(e) => setOwnerRoleUsernameEffect(e.target.value as RoleTextEffect)}
+                      className="mt-1 w-full px-2 py-2 rounded-md bg-background border border-border text-sm"
+                    >
+                      <option value="none">No Effect</option>
+                      <option value="glow">Glow</option>
+                      <option value="shadow">Shadow</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="rounded-md border border-border/60 bg-background/70 p-2.5">
+                  <p className="text-[11px] text-muted-foreground mb-1">Preview</p>
+                  <p
+                    className={`text-sm ${getRoleNamePresentation({
+                      role_color: ownerRoleColor,
+                      role_username_color: ownerRoleUsernameColor || null,
+                      role_username_style: ownerRoleUsernameStyle,
+                      role_username_effect: ownerRoleUsernameEffect,
+                    }).className}`}
+                    style={getRoleNamePresentation({
+                      role_color: ownerRoleColor,
+                      role_username_color: ownerRoleUsernameColor || null,
+                      role_username_style: ownerRoleUsernameStyle,
+                      role_username_effect: ownerRoleUsernameEffect,
+                    }).style}
+                  >
+                    {(ownerGroupName.trim() || "Owner")} Username
+                  </p>
+                  <RoleBadges
+                    className="mt-2"
+                    badges={[{
+                      id: "owner",
+                      name: ownerGroupName.trim() || "Owner",
+                      color: ownerRoleColor,
+                      icon: ownerRoleIcon.trim() || null,
+                      username_color: ownerRoleUsernameColor || null,
+                      username_style: ownerRoleUsernameStyle,
+                      username_effect: ownerRoleUsernameEffect,
+                      position: 9999,
+                    }]}
+                  />
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => void handleSaveOwnerGroupName()}
+                    disabled={savingOwnerGroup || !ownerGroupName.trim() || !ownerConfigDirty}
+                    className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm disabled:opacity-50"
+                  >
+                    {savingOwnerGroup ? "Saving..." : "Save Owner Role"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {roleEditorTarget?.type === "role" && roleEditorRole && (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Role Permissions</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {ROLE_PERMISSION_OPTIONS.map((perm) => {
+                      const enabled = roleEditorRole.permissions.includes(perm.key);
+                      return (
+                        <label key={perm.key} className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-background/70 border border-border/60 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={enabled}
+                            onChange={() => void handleToggleRolePermission(roleEditorRole.id, perm.key)}
+                            disabled={updatingRolePermissionsId === roleEditorRole.id}
+                            className="rounded border-border"
+                          />
+                          <span>{perm.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Role Appearance</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <label className="text-xs text-muted-foreground">
+                      Role Icon
+                      <input
+                        value={roleAppearanceDraft.icon}
+                        onChange={(e) => setRoleAppearanceDraft((prev) => ({ ...prev, icon: e.target.value }))}
+                        className="mt-1 w-full px-2 py-2 rounded-md bg-background border border-border text-sm"
+                        placeholder="e.g. *"
+                      />
+                    </label>
+                    <label className="text-xs text-muted-foreground">
+                      Username Color
+                      <div className="mt-1 flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={roleAppearanceDraft.usernameColor || roleEditorRole.color || "#9ca3af"}
+                          onChange={(e) => setRoleAppearanceDraft((prev) => ({ ...prev, usernameColor: e.target.value }))}
+                          className="h-9 w-12 rounded-md border border-border bg-background"
+                        />
+                        <button
+                          onClick={() => setRoleAppearanceDraft((prev) => ({ ...prev, usernameColor: "" }))}
+                          className="px-2 py-1 rounded bg-secondary text-secondary-foreground text-xs"
+                        >
+                          Use Role Color
+                        </button>
+                      </div>
+                    </label>
+                    <label className="text-xs text-muted-foreground">
+                      Username Style
+                      <select
+                        value={roleAppearanceDraft.usernameStyle}
+                        onChange={(e) => setRoleAppearanceDraft((prev) => ({ ...prev, usernameStyle: e.target.value as RoleTextStyle }))}
+                        className="mt-1 w-full px-2 py-2 rounded-md bg-background border border-border text-sm"
+                      >
+                        <option value="normal">Normal</option>
+                        <option value="bold">Bold</option>
+                        <option value="italic">Italic</option>
+                        <option value="underline">Underline</option>
+                      </select>
+                    </label>
+                    <label className="text-xs text-muted-foreground">
+                      Username Effect
+                      <select
+                        value={roleAppearanceDraft.usernameEffect}
+                        onChange={(e) => setRoleAppearanceDraft((prev) => ({ ...prev, usernameEffect: e.target.value as RoleTextEffect }))}
+                        className="mt-1 w-full px-2 py-2 rounded-md bg-background border border-border text-sm"
+                      >
+                        <option value="none">No Effect</option>
+                        <option value="glow">Glow</option>
+                        <option value="shadow">Shadow</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div className="rounded-md border border-border/60 bg-background/70 p-2.5">
+                    <p className="text-[11px] text-muted-foreground mb-1">Preview</p>
+                    <p
+                      className={`text-sm ${getRoleNamePresentation({
+                        role_color: roleEditorRole.color,
+                        role_username_color: roleAppearanceDraft.usernameColor || null,
+                        role_username_style: roleAppearanceDraft.usernameStyle,
+                        role_username_effect: roleAppearanceDraft.usernameEffect,
+                      }).className}`}
+                      style={getRoleNamePresentation({
+                        role_color: roleEditorRole.color,
+                        role_username_color: roleAppearanceDraft.usernameColor || null,
+                        role_username_style: roleAppearanceDraft.usernameStyle,
+                        role_username_effect: roleAppearanceDraft.usernameEffect,
+                      }).style}
+                    >
+                      {roleEditorRole.name} Username
+                    </p>
+                    <RoleBadges
+                      className="mt-2"
+                      badges={[{
+                        id: roleEditorRole.id,
+                        name: roleEditorRole.name,
+                        color: roleEditorRole.color,
+                        icon: roleAppearanceDraft.icon.trim() || null,
+                        username_color: roleAppearanceDraft.usernameColor || null,
+                        username_style: roleAppearanceDraft.usernameStyle,
+                        username_effect: roleAppearanceDraft.usernameEffect,
+                        position: roleEditorRole.position,
+                      }]}
+                    />
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => void handleSaveRoleAppearance()}
+                      disabled={savingRoleAppearanceId === roleEditorRole.id}
+                      className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm disabled:opacity-50"
+                    >
+                      {savingRoleAppearanceId === roleEditorRole.id ? "Saving..." : "Save Appearance"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {roleEditorTarget?.type === "role" && !roleEditorRole && (
+              <p className="text-sm text-muted-foreground">This role no longer exists.</p>
+            )}
+          </DialogContent>
+        </Dialog>
         {isMobile && (
           <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
             <SheetContent side="left" className="w-[88vw] max-w-sm p-0">
