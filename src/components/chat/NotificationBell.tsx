@@ -48,10 +48,6 @@ const NotificationBell = () => {
 
   useEffect(() => {
     if (!user) return;
-    const intervalId = window.setInterval(() => {
-      void loadNotifications();
-    }, 10000);
-
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") {
         void loadNotifications();
@@ -60,7 +56,6 @@ const NotificationBell = () => {
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
-      window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [loadNotifications, user]);

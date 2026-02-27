@@ -1082,22 +1082,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     };
 
-    const membersPollId = window.setInterval(() => {
-      void loadMembers();
-    }, 10000);
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
-      window.clearInterval(membersPollId);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       supabase.removeChannel(membersChannel);
     };
   }, [activeServerId, loadMembers]);
-
-  useEffect(() => {
-    if (!activeServerId) return;
-    void loadMembers();
-  }, [activeServerId, activeChannelId, channels, loadMembers]);
 
   useEffect(() => {
     if (!activeServerId || !user) {
@@ -1114,13 +1105,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     };
 
-    const intervalId = window.setInterval(() => {
-      void refreshChannelReadState();
-    }, 15000);
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
-      window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [activeServerId, refreshChannelReadState, user]);
@@ -1311,18 +1298,36 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const rxnChannel = supabase
       .channel(`reactions:${activeChannelId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "reactions" }, () => {
-        const msgIds = messagesRef.current.map((m) => m.id);
-        if (msgIds.length > 0) {
-          supabase.from("reactions").select("*").in("message_id", msgIds).then(({ data }) => {
-            const grouped: Record<string, Reaction[]> = {};
-            (data || []).forEach((r) => {
-              if (!grouped[r.message_id]) grouped[r.message_id] = [];
-              grouped[r.message_id].push(r as Reaction);
-            });
-            setReactions(grouped);
-          });
-        }
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "reactions" }, (payload) => {
+        const incoming = payload.new as Reaction;
+        const currentMessageIds = new Set(messagesRef.current.map((m) => m.id));
+        if (!currentMessageIds.has(incoming.message_id)) return;
+        setReactions((prev) => {
+          const existingForMessage = prev[incoming.message_id] || [];
+          if (existingForMessage.some((rxn) => rxn.id === incoming.id)) return prev;
+          if (existingForMessage.some((rxn) => rxn.user_id === incoming.user_id && rxn.emoji === incoming.emoji)) return prev;
+          return {
+            ...prev,
+            [incoming.message_id]: [...existingForMessage, incoming],
+          };
+        });
+      })
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "reactions" }, (payload) => {
+        const removed = payload.old as { id: string; message_id: string };
+        setReactions((prev) => {
+          const existingForMessage = prev[removed.message_id];
+          if (!existingForMessage || existingForMessage.length === 0) return prev;
+          const nextForMessage = existingForMessage.filter((rxn) => rxn.id !== removed.id);
+          if (nextForMessage.length === existingForMessage.length) return prev;
+          if (nextForMessage.length === 0) {
+            const { [removed.message_id]: _omit, ...rest } = prev;
+            return rest;
+          }
+          return {
+            ...prev,
+            [removed.message_id]: nextForMessage,
+          };
+        });
       })
       .subscribe();
 
@@ -1982,10 +1987,19 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const addReaction = useCallback(async (messageId: string, emoji: string) => {
     if (!user) return;
-    await supabase.from("reactions").insert({ message_id: messageId, user_id: user.id, emoji });
-    setReactions(prev => {
+    const { data, error } = await supabase
+      .from("reactions")
+      .insert({ message_id: messageId, user_id: user.id, emoji })
+      .select("*")
+      .single();
+    if (error || !data) return;
+
+    const inserted = data as Reaction;
+    setReactions((prev) => {
       const existing = prev[messageId] || [];
-      return { ...prev, [messageId]: [...existing, { id: crypto.randomUUID(), message_id: messageId, user_id: user.id, emoji, created_at: new Date().toISOString() }] };
+      if (existing.some((rxn) => rxn.id === inserted.id)) return prev;
+      if (existing.some((rxn) => rxn.user_id === inserted.user_id && rxn.emoji === inserted.emoji)) return prev;
+      return { ...prev, [messageId]: [...existing, inserted] };
     });
   }, [user]);
 

@@ -1,6 +1,7 @@
 import { Fragment, useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useDMContext } from "@/context/DMContext";
 import { useAuth } from "@/context/AuthContext";
+import { useChatContext } from "@/context/ChatContext";
 import { AtSign, PlusCircle, Gift, Smile, SendHorizonal, PanelLeft, Menu } from "lucide-react";
 import { format, isSameDay, isToday, isYesterday } from "date-fns";
 import { useNavigate } from "react-router-dom";
@@ -10,6 +11,7 @@ import { getEffectiveStatus } from "@/lib/presence";
 import { DMAreaSkeleton } from "@/components/skeletons/AppSkeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useLoadingReveal } from "@/hooks/useLoadingReveal";
+import UserProfileCard from "./UserProfileCard";
 
 interface FriendItem {
   id: string;
@@ -20,6 +22,15 @@ interface FriendItem {
   updated_at?: string | null;
 }
 
+type DMDisplayUser = {
+  id: string;
+  username: string;
+  display_name: string;
+  avatar_url: string | null;
+  status: string;
+  updated_at?: string | null;
+};
+
 type DMAreaProps = {
   isMobile?: boolean;
   onOpenServers?: () => void;
@@ -29,10 +40,13 @@ type DMAreaProps = {
 const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMAreaProps) => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { profile: chatProfile } = useChatContext();
   const { activeConversationId, conversations, dmMessages, sendDM, startConversation, isFriendsView, loadingDmMessages, loadingConversations } = useDMContext();
   const [input, setInput] = useState("");
   const [friends, setFriends] = useState<FriendItem[]>([]);
   const [loadingFriends, setLoadingFriends] = useState(false);
+  const [profileUser, setProfileUser] = useState<DMDisplayUser | null>(null);
+  const [profilePos, setProfilePos] = useState<{ top: number; left: number } | undefined>();
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
@@ -82,10 +96,6 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
 
   const conversation = conversations.find((c) => c.id === activeConversationId);
   const participant = conversation?.participant;
-
-  if (showingInitialSkeleton) {
-    return <DMAreaSkeleton />;
-  }
 
   useEffect(() => {
     pendingDmRestoreIdRef.current = activeConversationId || null;
@@ -209,11 +219,36 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
 
   // Build profile map from conversation participants
   const profileMap = useMemo(() => {
-    const map: Record<string, { display_name: string; id: string }> = {};
-    if (participant) map[participant.id] = participant;
-    if (user) map[user.id] = { display_name: user.user_metadata?.display_name || "You", id: user.id };
+    const map: Record<string, DMDisplayUser> = {};
+    if (participant) {
+      map[participant.id] = {
+        id: participant.id,
+        username: participant.username || "unknown",
+        display_name: participant.display_name || participant.username || "Unknown",
+        avatar_url: participant.avatar_url || null,
+        status: getEffectiveStatus(participant.status || "offline", participant.updated_at),
+        updated_at: participant.updated_at || null,
+      };
+    }
+    if (user) {
+      map[user.id] = {
+        id: user.id,
+        username: user.user_metadata?.username || user.email?.split("@")[0] || "you",
+        display_name: user.user_metadata?.display_name || "You",
+        avatar_url: chatProfile?.avatar_url || user.user_metadata?.avatar_url || null,
+        status: "online",
+        updated_at: null,
+      };
+    }
     return map;
-  }, [participant, user]);
+  }, [chatProfile?.avatar_url, participant, user]);
+
+  const openProfileFromAnchor = useCallback((targetUser: DMDisplayUser | undefined, anchorEl: HTMLElement) => {
+    if (!targetUser) return;
+    const rect = anchorEl.getBoundingClientRect();
+    setProfilePos({ top: rect.top, left: rect.left - 330 });
+    setProfileUser(targetUser);
+  }, []);
 
   const handleStartFriendDM = async (friendId: string) => {
     await startConversation(friendId);
@@ -226,6 +261,10 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
     saveConversationScroll(activeConversationId, el.scrollTop);
     shouldAutoScrollRef.current = isNearBottom();
   }, [activeConversationId, isFriendsView, isNearBottom, saveConversationScroll]);
+
+  if (showingInitialSkeleton) {
+    return <DMAreaSkeleton />;
+  }
 
   return (
     <div className={`flex flex-col flex-1 min-w-0 bg-chat-area ${revealInitial ? "animate-in fade-in-0 duration-200 ease-out" : ""}`}>
@@ -422,15 +461,26 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
                         </div>
                       )}
                       <div className={`flex gap-4 ${rowSpacingClass} hover:bg-chat-hover rounded px-1 group`}>
-                        <div
-                          className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 mt-0.5 text-foreground"
-                          style={{ backgroundColor: `hsl(${(msg.user_id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}
-                        >
-                          {initials}
+                        <div className="w-10 h-10 rounded-full shrink-0 mt-0.5 overflow-hidden bg-secondary flex items-center justify-center text-xs font-semibold text-foreground">
+                          {sender?.avatar_url ? (
+                            <img src={sender.avatar_url} alt={displayName} className="w-full h-full object-cover" />
+                          ) : (
+                            <div
+                              className="w-full h-full flex items-center justify-center"
+                              style={{ backgroundColor: `hsl(${(msg.user_id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}
+                            >
+                              {initials}
+                            </div>
+                          )}
                         </div>
                         <div className="min-w-0">
                           <div className="flex items-baseline gap-2">
-                            <span className="text-sm font-semibold text-foreground">{displayName}</span>
+                            <span
+                              className="text-sm font-semibold text-foreground hover:underline cursor-pointer"
+                              onClick={(e) => openProfileFromAnchor(sender, e.currentTarget as HTMLElement)}
+                            >
+                              {displayName}
+                            </span>
                             <span className="text-[11px] text-muted-foreground">{formatTimestamp(msg.created_at)}</span>
                           </div>
                           <p className="text-sm text-foreground">
@@ -482,6 +532,14 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
             </div>
           </div>
         </div>
+      )}
+      {profileUser && (
+        <UserProfileCard
+          user={profileUser}
+          open={!!profileUser}
+          onClose={() => setProfileUser(null)}
+          position={profilePos}
+        />
       )}
     </div>
   );

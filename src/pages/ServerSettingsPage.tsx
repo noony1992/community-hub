@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowDown, ArrowLeft, ArrowUp, Hash, MessageSquare, Plus, Search, Settings, Shield, Trash2, Users, Volume2, PanelLeft } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
@@ -441,8 +441,11 @@ const ServerSettingsPage = () => {
   const [newOnboardingStepChannelId, setNewOnboardingStepChannelId] = useState("");
   const [newOnboardingStepRequired, setNewOnboardingStepRequired] = useState(true);
   const [rolesSubtab, setRolesSubtab] = useState<"templates" | "manageUsers">("manageUsers");
+  const [visibleManageUsersCount, setVisibleManageUsersCount] = useState(60);
+  const [expandedRolePickerByUser, setExpandedRolePickerByUser] = useState<Record<string, boolean>>({});
   const isMobile = useIsMobile();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const deferredMemberSearch = useDeferredValue(memberSearch);
 
   const server = useMemo(() => servers.find((s) => s.id === serverId), [servers, serverId]);
   const isOwner = !!user && !!server && server.owner_id === user.id;
@@ -2235,16 +2238,22 @@ const ServerSettingsPage = () => {
     : null;
   const overrideScopeOptions = overrideScopeType === "channel" ? channels : channelGroups;
   const serverOwnerId = server?.owner_id || null;
-  const filteredMembers = members.filter((member) => {
-    const q = memberSearch.trim().toLowerCase();
-    if (!q) return true;
-    const assignedRoles = getMemberAssignedRoleNames(member).join(" ").toLowerCase();
-    return (
-      member.display_name.toLowerCase().includes(q) ||
-      member.username.toLowerCase().includes(q) ||
-      assignedRoles.includes(q)
-    );
-  });
+  const filteredMembers = useMemo(() => {
+    const q = deferredMemberSearch.trim().toLowerCase();
+    if (!q) return members;
+    return members.filter((member) => {
+      const assignedRoles = getMemberAssignedRoleNames(member).join(" ").toLowerCase();
+      return (
+        member.display_name.toLowerCase().includes(q) ||
+        member.username.toLowerCase().includes(q) ||
+        assignedRoles.includes(q)
+      );
+    });
+  }, [deferredMemberSearch, getMemberAssignedRoleNames, members]);
+  const visibleManageUsers = useMemo(
+    () => filteredMembers.slice(0, visibleManageUsersCount),
+    [filteredMembers, visibleManageUsersCount],
+  );
   const memberById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
   const nonOwnerMembers = members.filter((member) => member.id !== serverOwnerId);
   const activeTemporaryRoleGrants = temporaryRoleGrants.filter(
@@ -2257,6 +2266,11 @@ const ServerSettingsPage = () => {
       return memberRoleNames.some((roleName) => roleByName.get(normalizeRoleName(roleName))?.permissions?.includes("mod_menu"));
     });
   }, [activeAssignedRoleNamesByUser, members, roleByName, serverOwnerId, sortRoleNamesByPriority]);
+
+  useEffect(() => {
+    setVisibleManageUsersCount(60);
+    setExpandedRolePickerByUser({});
+  }, [deferredMemberSearch, rolesSubtab]);
 
   const getBanLengthLabel = (ban: BanListItem) => {
     if (!ban.expires_at) return "Permanent";
@@ -3311,10 +3325,13 @@ const ServerSettingsPage = () => {
                     className="w-full pl-8 pr-3 py-2 rounded-md bg-background border border-border text-sm outline-none focus:ring-2 focus:ring-primary/50"
                   />
                 </div>
-                {filteredMembers.map((member) => {
+                {visibleManageUsers.map((member) => {
                   const isServerOwner = member.id === server.owner_id;
                   const initials = member.display_name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
                   const assignedRoleNames = getMemberAssignedRoleNames(member);
+                  const rolePickerExpanded = !!expandedRolePickerByUser[member.id];
+                  const rolePickerBase = rolePickerExpanded ? roleOptions : roleOptions.slice(0, 12);
+                  const rolePickerOptions = Array.from(new Set([...rolePickerBase, ...assignedRoleNames]));
                   const assignedBadges = assignedRoleNames
                     .map((roleName) => roleByName.get(normalizeRoleName(roleName)))
                     .filter((role): role is ServerRole => !!role)
@@ -3360,7 +3377,7 @@ const ServerSettingsPage = () => {
                         </span>
                       ) : (
                         <div className="flex flex-wrap items-center justify-end gap-1">
-                          {roleOptions.map((roleName) => {
+                          {rolePickerOptions.map((roleName) => {
                             const isSelected = assignedRoleNames.some((name) => normalizeRoleName(name) === normalizeRoleName(roleName));
                             return (
                               <button
@@ -3382,11 +3399,32 @@ const ServerSettingsPage = () => {
                               </button>
                             );
                           })}
+                          {roleOptions.length > 12 && (
+                            <button
+                              onClick={() =>
+                                setExpandedRolePickerByUser((prev) => ({
+                                  ...prev,
+                                  [member.id]: !prev[member.id],
+                                }))
+                              }
+                              className="px-2 py-1 rounded-md border border-border bg-background/60 text-[11px] text-muted-foreground hover:text-foreground"
+                            >
+                              {rolePickerExpanded ? "Less Roles" : `+${roleOptions.length - rolePickerOptions.length} More`}
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
                   );
                 })}
+                {filteredMembers.length > visibleManageUsers.length && (
+                  <button
+                    onClick={() => setVisibleManageUsersCount((prev) => prev + 60)}
+                    className="w-full rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    Load More Users ({filteredMembers.length - visibleManageUsers.length} remaining)
+                  </button>
+                )}
                 {filteredMembers.length === 0 && <p className="text-sm text-muted-foreground">No users match your search.</p>}
               </div>
             )}

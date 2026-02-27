@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useDMContext } from "@/context/DMContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/AuthContext";
-import { Search, Users, X } from "lucide-react";
+import { Search, Users, ChevronRight, X } from "lucide-react";
 import StatusIndicator from "./StatusIndicator";
 import { getEffectiveStatus } from "@/lib/presence";
 import BottomLeftDock from "./BottomLeftDock";
@@ -122,12 +122,16 @@ const DMSidebar = ({ embedded = false, onNavigate }: DMSidebarProps) => {
                   className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-chat-hover transition-colors"
                 >
                   <div className="relative shrink-0">
-                    <div
-                      className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-foreground"
-                      style={{ backgroundColor: `hsl(${(p.id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}
-                    >
-                      {initials}
-                    </div>
+                    {p.avatar_url ? (
+                      <img src={p.avatar_url} alt={p.display_name} className="w-8 h-8 rounded-full object-cover" />
+                    ) : (
+                      <div
+                        className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-foreground"
+                        style={{ backgroundColor: `hsl(${(p.id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}
+                      >
+                        {initials}
+                      </div>
+                    )}
                     <StatusIndicator status={getEffectiveStatus(p.status, p.updated_at)} className="absolute -bottom-0.5 -right-0.5" />
                   </div>
                   <div className="text-left min-w-0">
@@ -144,14 +148,24 @@ const DMSidebar = ({ embedded = false, onNavigate }: DMSidebarProps) => {
       <div className="px-2 pb-2">
         <button
           onClick={() => setIsFriendsView(!isFriendsView)}
-          className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-sm transition-colors ${
+          className={`w-full flex items-center justify-between px-3 py-2.5 rounded-md text-left transition-colors ${
             isFriendsView
-              ? "bg-primary text-primary-foreground"
-              : "bg-secondary text-secondary-foreground hover:opacity-90"
+              ? "bg-primary/15 border border-primary/35 text-primary"
+              : "bg-secondary/70 border border-border text-foreground hover:bg-secondary"
           }`}
         >
-          <Users className="w-4 h-4" />
-          Friends
+          <span className="flex items-center gap-2 min-w-0">
+            <span className={`inline-flex h-7 w-7 items-center justify-center rounded-md ${isFriendsView ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground"}`}>
+              <Users className="w-4 h-4" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-medium leading-tight">Friends Hub</span>
+              <span className={`block text-[11px] leading-tight ${isFriendsView ? "text-primary/80" : "text-muted-foreground"}`}>
+                Browse friends and start DMs
+              </span>
+            </span>
+          </span>
+          <ChevronRight className={`w-4 h-4 shrink-0 transition-transform ${isFriendsView ? "rotate-90" : ""}`} />
         </button>
       </div>
 
@@ -179,12 +193,16 @@ const DMSidebar = ({ embedded = false, onNavigate }: DMSidebarProps) => {
               }`}
             >
               <div className="relative shrink-0">
-                <div
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-foreground"
-                  style={{ backgroundColor: `hsl(${(p.id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}
-                >
-                  {initials}
-                </div>
+                {p.avatar_url ? (
+                  <img src={p.avatar_url} alt={p.display_name} className="w-8 h-8 rounded-full object-cover" />
+                ) : (
+                  <div
+                    className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-foreground"
+                    style={{ backgroundColor: `hsl(${(p.id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}
+                  >
+                    {initials}
+                  </div>
+                )}
                 <StatusIndicator status={getEffectiveStatus(p.status, p.updated_at)} className="absolute -bottom-0.5 -right-0.5" />
               </div>
               <span className="truncate">{p.display_name}</span>

@@ -60,6 +60,7 @@ type ChatAreaProps = {
   onOpenServers?: () => void;
   onOpenChannels?: () => void;
   onOpenMembers?: () => void;
+  onToggleMembers?: () => void;
 };
 
 const ChatArea = ({
@@ -67,6 +68,7 @@ const ChatArea = ({
   onOpenServers,
   onOpenChannels,
   onOpenMembers,
+  onToggleMembers,
 }: ChatAreaProps) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
@@ -142,6 +144,8 @@ const ChatArea = ({
   const [rsvpSavingEventId, setRsvpSavingEventId] = useState<string | null>(null);
   const [moveVoiceTargetByUser, setMoveVoiceTargetByUser] = useState<Record<string, string>>({});
   const [expandedVideoUserId, setExpandedVideoUserId] = useState<string | null>(null);
+  const [visibleTopLevelCount, setVisibleTopLevelCount] = useState(220);
+  const [visibleForumTopicCount, setVisibleForumTopicCount] = useState(150);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const forumMessagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -1273,11 +1277,19 @@ const ChatArea = ({
   };
 
   // Filter out thread replies from main view (show only top-level messages)
-  const topLevelMessages = messages.filter((m) => !m.reply_to);
+  const topLevelMessages = useMemo(() => messages.filter((m) => !m.reply_to), [messages]);
+  const visibleTopLevelMessages = useMemo(() => {
+    if (topLevelMessages.length <= visibleTopLevelCount) return topLevelMessages;
+    return topLevelMessages.slice(topLevelMessages.length - visibleTopLevelCount);
+  }, [topLevelMessages, visibleTopLevelCount]);
   const forumTopics = useMemo(
     () => [...topLevelMessages].sort((a, b) => parseTs(b.created_at) - parseTs(a.created_at)),
     [parseTs, topLevelMessages],
   );
+  const visibleForumTopics = useMemo(() => {
+    if (forumTopics.length <= visibleForumTopicCount) return forumTopics;
+    return forumTopics.slice(0, visibleForumTopicCount);
+  }, [forumTopics, visibleForumTopicCount]);
   const firstUnreadTopLevelMessageId = useMemo(() => {
     if (activeUnreadCount <= 0) return null;
     if (topLevelMessages.length === 0) return null;
@@ -1311,6 +1323,11 @@ const ChatArea = ({
     if (!el) return;
     saveChannelScroll(activeChannelId, el.scrollTop);
   }, [activeChannelId, saveChannelScroll]);
+
+  useEffect(() => {
+    setVisibleTopLevelCount(220);
+    setVisibleForumTopicCount(150);
+  }, [activeChannelId]);
 
   const getVoiceMoveTarget = useCallback(
     (userId: string) => {
@@ -1932,6 +1949,14 @@ const ChatArea = ({
             onScroll={handleForumMessagesScroll}
             className="flex-1 overflow-y-auto p-3 space-y-3"
           >
+            {forumTopics.length > visibleForumTopics.length && (
+              <button
+                onClick={() => setVisibleForumTopicCount((prev) => prev + 150)}
+                className="w-full rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground hover:text-foreground"
+              >
+                Load Older Topics ({forumTopics.length - visibleForumTopics.length} remaining)
+              </button>
+            )}
             {!activeChannelId && (
               <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
                 <MessageSquare className="w-16 h-16 mb-4 opacity-30" />
@@ -1954,7 +1979,7 @@ const ChatArea = ({
               </div>
             )}
 
-            {forumTopics.map((topicMessage) => {
+            {visibleForumTopics.map((topicMessage) => {
               const topic = getForumTopic(topicMessage);
               const author = memberMap[topicMessage.user_id]?.display_name || "Unknown";
               const replies = threadRepliesByParent[topicMessage.id] || [];
@@ -2134,6 +2159,8 @@ const ChatArea = ({
               onClick={() => {
                 if (isMobile) {
                   onOpenMembers?.();
+                } else {
+                  onToggleMembers?.();
                 }
               }}
               className="text-muted-foreground hover:text-foreground transition-colors"
@@ -2165,6 +2192,14 @@ const ChatArea = ({
 
         {/* Messages */}
         <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="flex-1 overflow-y-auto px-3 py-3 space-y-1">
+          {topLevelMessages.length > visibleTopLevelMessages.length && (
+            <button
+              onClick={() => setVisibleTopLevelCount((prev) => prev + 220)}
+              className="mb-2 w-full rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Load Older Messages ({topLevelMessages.length - visibleTopLevelMessages.length} remaining)
+            </button>
+          )}
           {!activeChannelId && (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
               <Hash className="w-16 h-16 mb-4 opacity-30" />
@@ -2179,11 +2214,11 @@ const ChatArea = ({
               <p className="text-sm">This is the start of the channel.</p>
             </div>
           )}
-          {topLevelMessages.map((msg, i) => {
+          {visibleTopLevelMessages.map((msg, i) => {
             const msgUser = memberMap[msg.user_id];
-            const prevMsg = topLevelMessages[i - 1];
-            const prevPrevMsg = topLevelMessages[i - 2];
-            const nextMsg = topLevelMessages[i + 1];
+            const prevMsg = visibleTopLevelMessages[i - 1];
+            const prevPrevMsg = visibleTopLevelMessages[i - 2];
+            const nextMsg = visibleTopLevelMessages[i + 1];
             const isOwn = msg.user_id === user?.id;
             const isEditing = editingId === msg.id;
             const isBannedTombstone = msg.content === "User Banned";

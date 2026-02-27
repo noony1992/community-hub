@@ -20,6 +20,7 @@ const ChatLayout = () => {
   const [channelsOpen, setChannelsOpen] = useState(false);
   const [dmsOpen, setDmsOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
+  const [membersVisible, setMembersVisible] = useState(true);
 
   useEffect(() => {
     const view = searchParams.get("view");
@@ -117,8 +118,8 @@ const ChatLayout = () => {
       ) : (
         <>
           <ChannelSidebar />
-          <ChatArea />
-          <MemberSidebar />
+          <ChatArea onToggleMembers={() => setMembersVisible((prev) => !prev)} />
+          {membersVisible && <MemberSidebar />}
         </>
       )}
     </div>

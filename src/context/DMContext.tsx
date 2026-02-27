@@ -160,13 +160,9 @@ export const DMProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       }
     };
 
-    const intervalId = window.setInterval(() => {
-      void loadConversations();
-    }, 15000);
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
-      window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [loadConversations, user]);
