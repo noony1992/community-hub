@@ -147,6 +147,7 @@ const ChatArea = ({
   const [expandedVideoUserId, setExpandedVideoUserId] = useState<string | null>(null);
   const [visibleTopLevelCount, setVisibleTopLevelCount] = useState(220);
   const [visibleForumTopicCount, setVisibleForumTopicCount] = useState(150);
+  const [jumpHighlightMessageId, setJumpHighlightMessageId] = useState<string | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const forumMessagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -1349,6 +1350,29 @@ const ChatArea = ({
     el?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [firstUnreadTopLevelMessageId]);
 
+  const jumpToMessageById = useCallback((messageId: string) => {
+    if (!messageId) return;
+    const targetTopLevelIndex = topLevelMessages.findIndex((message) => message.id === messageId);
+    if (targetTopLevelIndex >= 0) {
+      const requiredVisibleCount = topLevelMessages.length - targetTopLevelIndex;
+      setVisibleTopLevelCount((prev) => Math.max(prev, requiredVisibleCount));
+    }
+    window.setTimeout(() => {
+      const el = document.getElementById(`msg-${messageId}`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setJumpHighlightMessageId(messageId);
+      window.setTimeout(() => {
+        setJumpHighlightMessageId((prev) => (prev === messageId ? null : prev));
+      }, 1800);
+    }, 40);
+  }, [topLevelMessages]);
+
+  const handleJumpToPinnedMessage = useCallback((messageId: string) => {
+    setShowPinned(false);
+    jumpToMessageById(messageId);
+  }, [jumpToMessageById]);
+
   const handleMessagesScroll = useCallback(() => {
     const el = messagesContainerRef.current;
     if (activeChannelId && el) {
@@ -2118,7 +2142,12 @@ const ChatArea = ({
             </DialogContent>
           </Dialog>
           <SearchDialog open={showSearch} onClose={() => setShowSearch(false)} />
-          <PinnedMessagesPanel open={showPinned} onClose={() => setShowPinned(false)} members={memberMap} />
+          <PinnedMessagesPanel
+            open={showPinned}
+            onClose={() => setShowPinned(false)}
+            onJumpToMessage={handleJumpToPinnedMessage}
+            members={memberMap}
+          />
         </div>
 
         {showThreadPanel && (
@@ -2309,6 +2338,8 @@ const ChatArea = ({
                 <div
                   id={`msg-${msg.id}`}
                   className={`${isBannedTombstone ? "pl-1" : "pl-[60px]"} py-0 hover:bg-chat-hover rounded group relative ${
+                    jumpHighlightMessageId === msg.id ? "ring-1 ring-primary/50 bg-primary/10" : ""
+                  } ${
                     msg.pinned_at ? "border-l-2 border-primary/40 -ml-1 pl-[62px]" : ""
                   }`}
                   style={isFirstGroupedFollowup ? { marginTop: "-0px" } : undefined}
@@ -2377,7 +2408,7 @@ const ChatArea = ({
                     <div className="h-px flex-1 bg-primary/40" />
                   </div>
                 )}
-              <div id={`msg-${msg.id}`} className={`flex gap-4 ${rowSpacingClass} ${groupedRunGapAdjustClass} hover:bg-chat-hover rounded px-1 group ${msg.pinned_at ? "border-l-2 border-primary/40" : ""}`}>
+              <div id={`msg-${msg.id}`} className={`flex gap-4 ${rowSpacingClass} ${groupedRunGapAdjustClass} hover:bg-chat-hover rounded px-1 group ${jumpHighlightMessageId === msg.id ? "ring-1 ring-primary/50 bg-primary/10" : ""} ${msg.pinned_at ? "border-l-2 border-primary/40" : ""}`}>
                 {!isBannedTombstone && (
                   <div className="w-10 h-10 rounded-full shrink-0 mt-0.5 overflow-hidden bg-secondary flex items-center justify-center text-xs font-semibold text-foreground">
                     {msgUser?.avatar_url ? (
@@ -2699,7 +2730,12 @@ const ChatArea = ({
         )}
 
         <SearchDialog open={showSearch} onClose={() => setShowSearch(false)} />
-        <PinnedMessagesPanel open={showPinned} onClose={() => setShowPinned(false)} members={memberMap} />
+        <PinnedMessagesPanel
+          open={showPinned}
+          onClose={() => setShowPinned(false)}
+          onJumpToMessage={handleJumpToPinnedMessage}
+          members={memberMap}
+        />
         <Dialog open={showScheduleModal} onOpenChange={setShowScheduleModal}>
           <DialogContent>
             <DialogHeader>

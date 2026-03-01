@@ -9,10 +9,11 @@ import { renderContentWithMentions } from "./MentionAutocomplete";
 interface PinnedMessagesPanelProps {
   open: boolean;
   onClose: () => void;
+  onJumpToMessage: (messageId: string) => void;
   members: Record<string, { display_name: string }>;
 }
 
-const PinnedMessagesPanel = ({ open, onClose, members }: PinnedMessagesPanelProps) => {
+const PinnedMessagesPanel = ({ open, onClose, onJumpToMessage, members }: PinnedMessagesPanelProps) => {
   const { getPinnedMessages, unpinMessage, activeChannelId, activeServerId, channels, setActiveServer, setActiveChannel } = useChatContext();
   const [pinned, setPinned] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
@@ -142,14 +143,23 @@ const PinnedMessagesPanel = ({ open, onClose, members }: PinnedMessagesPanelProp
                         </div>
                       </div>
                     </div>
-                    <button
-                      onClick={() => void handleUnpin(msg.id)}
-                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 hover:bg-destructive/10 transition-colors"
-                      title="Unpin message"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                      Unpin
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => onJumpToMessage(msg.id)}
+                        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] border border-border text-muted-foreground hover:text-foreground hover:border-primary/40 hover:bg-primary/10 transition-colors"
+                        title="Jump to message"
+                      >
+                        View
+                      </button>
+                      <button
+                        onClick={() => void handleUnpin(msg.id)}
+                        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 hover:bg-destructive/10 transition-colors"
+                        title="Unpin message"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        Unpin
+                      </button>
+                    </div>
                   </div>
                   <p className="text-sm text-foreground mt-2 whitespace-pre-wrap break-words leading-relaxed">
                     {renderContentWithMentions(msg.content || "Message content unavailable", [], {
