@@ -23,15 +23,36 @@ interface DMMessage {
   client_request_id?: string | null;
 }
 
+interface PendingFriendRequest {
+  id: string;
+  requester_id: string;
+  created_at: string;
+  requester: {
+    id: string;
+    username: string;
+    display_name: string;
+    avatar_url: string | null;
+    status: string;
+    updated_at?: string | null;
+  };
+}
+
 interface DMState {
   conversations: DMConversation[];
   activeConversationId: string | null;
   dmMessages: DMMessage[];
+  dmUnreadCountByConversation: Record<string, number>;
+  totalDmUnreadCount: number;
+  pendingFriendRequests: PendingFriendRequest[];
+  pendingFriendRequestCount: number;
   loadingConversations: boolean;
   loadingDmMessages: boolean;
   setActiveConversation: (id: string | null) => void;
   sendDM: (content: string) => Promise<void>;
   startConversation: (otherUserId: string) => Promise<string | null>;
+  acceptFriendRequest: (friendshipId: string, requesterId: string) => Promise<void>;
+  denyFriendRequest: (friendshipId: string, requesterId: string) => Promise<void>;
+  blockFriendRequest: (friendshipId: string, requesterId: string) => Promise<void>;
   loadConversations: () => Promise<void>;
   isDMMode: boolean;
   setIsDMMode: (v: boolean) => void;
@@ -52,16 +73,111 @@ export const DMProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [conversations, setConversations] = useState<DMConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [dmMessages, setDmMessages] = useState<DMMessage[]>([]);
+  const [dmUnreadCountByConversation, setDmUnreadCountByConversation] = useState<Record<string, number>>({});
+  const [pendingFriendRequests, setPendingFriendRequests] = useState<PendingFriendRequest[]>([]);
   const [loadingConversations, setLoadingConversations] = useState(false);
   const [loadingDmMessages, setLoadingDmMessages] = useState(false);
   const [isDMMode, setIsDMMode] = useState(false);
   const [isFriendsView, setIsFriendsView] = useState(false);
   const dmRetryQueueRef = useRef(new RetryQueue());
+  const pendingFriendRequestCount = pendingFriendRequests.length;
+  const totalDmUnreadCount = Object.values(dmUnreadCountByConversation).reduce((sum, count) => sum + count, 0);
 
   const setActiveConversation = useCallback((id: string | null) => {
     setActiveConversationId(id);
+    if (id) {
+      setDmUnreadCountByConversation((prev) => {
+        if (!prev[id]) return prev;
+        return { ...prev, [id]: 0 };
+      });
+    }
     if (id) setIsFriendsView(false);
   }, []);
+
+  const loadDmUnreadState = useCallback(async () => {
+    if (!user?.id) {
+      setDmUnreadCountByConversation({});
+      return;
+    }
+    const { data } = await supabase
+      .from("notifications")
+      .select("id, link_conversation_id")
+      .eq("user_id", user.id)
+      .eq("type", "dm")
+      .eq("is_read", false)
+      .not("link_conversation_id", "is", null);
+
+    const next: Record<string, number> = {};
+    (data || []).forEach((row) => {
+      const conversationId = row.link_conversation_id;
+      if (!conversationId) return;
+      next[conversationId] = (next[conversationId] || 0) + 1;
+    });
+    setDmUnreadCountByConversation((prev) => {
+      const merged: Record<string, number> = { ...next };
+      Object.entries(prev).forEach(([conversationId, count]) => {
+        if (conversationId === activeConversationId) return;
+        merged[conversationId] = Math.max(merged[conversationId] || 0, count);
+      });
+      if (activeConversationId) merged[activeConversationId] = 0;
+      return merged;
+    });
+  }, [activeConversationId, user?.id]);
+
+  const loadPendingFriendRequests = useCallback(async () => {
+    if (!user?.id) {
+      setPendingFriendRequests([]);
+      return;
+    }
+
+    const { data: requestRows } = await supabase
+      .from("friendships")
+      .select("id, requester_id, created_at")
+      .eq("addressee_id", user.id)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false });
+
+    const requesterIds = Array.from(new Set((requestRows || []).map((row) => row.requester_id)));
+    if (requesterIds.length === 0) {
+      setPendingFriendRequests([]);
+      return;
+    }
+
+    const { data: requesterProfiles } = await supabase
+      .from("profiles")
+      .select("id, username, display_name, avatar_url, status, updated_at")
+      .in("id", requesterIds);
+
+    const requesterProfileMap = new Map(
+      (requesterProfiles || []).map((profile) => [profile.id, profile]),
+    );
+
+    const next = (requestRows || [])
+      .map((row) => {
+        const profile = requesterProfileMap.get(row.requester_id);
+        if (!profile) return null;
+        return {
+          id: row.id,
+          requester_id: row.requester_id,
+          created_at: row.created_at,
+          requester: {
+            id: profile.id,
+            username: profile.username,
+            display_name: profile.display_name,
+            avatar_url: profile.avatar_url,
+            status: getEffectiveStatus(profile.status, profile.updated_at),
+            updated_at: profile.updated_at,
+          },
+        } as PendingFriendRequest;
+      })
+      .filter((row): row is PendingFriendRequest => !!row);
+
+    setPendingFriendRequests(next);
+  }, [user?.id]);
+
+  const loadFriendAndUnreadState = useCallback(async () => {
+    await Promise.all([loadDmUnreadState(), loadPendingFriendRequests()]);
+  }, [loadDmUnreadState, loadPendingFriendRequests]);
 
   const loadConversations = useCallback(async () => {
     if (!user) {
@@ -152,11 +268,16 @@ export const DMProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   }, [loadConversations]);
 
   useEffect(() => {
+    void loadFriendAndUnreadState();
+  }, [loadFriendAndUnreadState]);
+
+  useEffect(() => {
     if (!user) return;
 
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") {
         void loadConversations();
+        void loadFriendAndUnreadState();
       }
     };
 
@@ -165,7 +286,107 @@ export const DMProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     return () => {
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [loadConversations, user]);
+  }, [loadConversations, loadFriendAndUnreadState, user]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const notificationsChannel = supabase
+      .channel(`dm-notifications:${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          const next = payload.new as { type?: string; is_read?: boolean; link_conversation_id?: string | null } | null;
+          if (
+            next?.type === "dm" &&
+            next.is_read === false &&
+            next.link_conversation_id &&
+            next.link_conversation_id === activeConversationId &&
+            document.visibilityState === "visible"
+          ) {
+            void supabase
+              .from("notifications")
+              .update({ is_read: true })
+              .eq("user_id", user.id)
+              .eq("type", "dm")
+              .eq("link_conversation_id", activeConversationId)
+              .eq("is_read", false)
+              .then(() => loadDmUnreadState());
+            return;
+          }
+          void loadDmUnreadState();
+        },
+      )
+      .subscribe();
+
+    const friendshipsChannel = supabase
+      .channel(`friendships:${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "friendships", filter: `addressee_id=eq.${user.id}` },
+        () => {
+          void loadPendingFriendRequests();
+          void loadConversations();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(notificationsChannel);
+      supabase.removeChannel(friendshipsChannel);
+    };
+  }, [activeConversationId, loadConversations, loadDmUnreadState, loadPendingFriendRequests, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || conversations.length === 0) return;
+    const conversationIds = new Set(conversations.map((conversation) => conversation.id));
+
+    const directMessagesChannel = supabase
+      .channel(`dm-inserts:${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "direct_messages" },
+        (payload) => {
+          const next = payload.new as DMMessage;
+          if (!conversationIds.has(next.conversation_id)) return;
+          if (next.user_id === user.id) return;
+          const isVisibleActiveConversation =
+            next.conversation_id === activeConversationId &&
+            document.visibilityState === "visible";
+          if (isVisibleActiveConversation) {
+            setDmUnreadCountByConversation((prev) => {
+              if (!prev[next.conversation_id]) return prev;
+              return { ...prev, [next.conversation_id]: 0 };
+            });
+            return;
+          }
+          setDmUnreadCountByConversation((prev) => ({
+            ...prev,
+            [next.conversation_id]: (prev[next.conversation_id] || 0) + 1,
+          }));
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(directMessagesChannel);
+    };
+  }, [activeConversationId, conversations, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || !activeConversationId) return;
+    void (async () => {
+      await supabase
+        .from("notifications")
+        .update({ is_read: true })
+        .eq("user_id", user.id)
+        .eq("type", "dm")
+        .eq("link_conversation_id", activeConversationId)
+        .eq("is_read", false);
+      await loadDmUnreadState();
+    })();
+  }, [activeConversationId, loadDmUnreadState, user?.id]);
 
   // Load DM messages + realtime
   useEffect(() => {
@@ -405,16 +626,70 @@ export const DMProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     return conversationId;
   }, [user, conversations, loadConversations]);
 
+  const markFriendNotificationsRead = useCallback(async (requesterId: string) => {
+    if (!user?.id) return;
+    await supabase
+      .from("notifications")
+      .update({ is_read: true })
+      .eq("user_id", user.id)
+      .eq("type", "friend_request")
+      .eq("link_user_id", requesterId)
+      .eq("is_read", false);
+  }, [user?.id]);
+
+  const acceptFriendRequest = useCallback(async (friendshipId: string, requesterId: string) => {
+    if (!user?.id) return;
+    const { error } = await supabase
+      .from("friendships")
+      .update({ status: "accepted" })
+      .eq("id", friendshipId)
+      .eq("addressee_id", user.id);
+    if (error) throw error;
+    await markFriendNotificationsRead(requesterId);
+    await Promise.all([loadPendingFriendRequests(), loadConversations(), loadDmUnreadState()]);
+  }, [loadConversations, loadDmUnreadState, loadPendingFriendRequests, markFriendNotificationsRead, user?.id]);
+
+  const denyFriendRequest = useCallback(async (friendshipId: string, requesterId: string) => {
+    if (!user?.id) return;
+    const { error } = await supabase
+      .from("friendships")
+      .delete()
+      .eq("id", friendshipId)
+      .eq("addressee_id", user.id);
+    if (error) throw error;
+    await markFriendNotificationsRead(requesterId);
+    await loadPendingFriendRequests();
+  }, [loadPendingFriendRequests, markFriendNotificationsRead, user?.id]);
+
+  const blockFriendRequest = useCallback(async (friendshipId: string, requesterId: string) => {
+    if (!user?.id) return;
+    const { error } = await supabase
+      .from("friendships")
+      .update({ status: "blocked" })
+      .eq("id", friendshipId)
+      .eq("addressee_id", user.id);
+    if (error) throw error;
+    await markFriendNotificationsRead(requesterId);
+    await loadPendingFriendRequests();
+  }, [loadPendingFriendRequests, markFriendNotificationsRead, user?.id]);
+
   return (
     <DMContext.Provider value={{
       conversations,
       activeConversationId,
       dmMessages,
+      dmUnreadCountByConversation,
+      totalDmUnreadCount,
+      pendingFriendRequests,
+      pendingFriendRequestCount,
       loadingConversations,
       loadingDmMessages,
       setActiveConversation,
       sendDM,
       startConversation,
+      acceptFriendRequest,
+      denyFriendRequest,
+      blockFriendRequest,
       loadConversations,
       isDMMode,
       setIsDMMode,

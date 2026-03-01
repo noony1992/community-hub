@@ -5,12 +5,13 @@ interface MentionAutocompleteProps {
   members: { id: string; username: string; display_name: string }[];
   onSelect: (username: string) => void;
   visible: boolean;
+  allowEveryone?: boolean;
 }
 
-const MentionAutocomplete = ({ query, members, onSelect, visible }: MentionAutocompleteProps) => {
+const MentionAutocomplete = ({ query, members, onSelect, visible, allowEveryone = true }: MentionAutocompleteProps) => {
   const ref = useRef<HTMLDivElement>(null);
   const queryLower = query.toLowerCase();
-  const showEveryone = queryLower.length === 0 || "everyone".startsWith(queryLower);
+  const showEveryone = allowEveryone && (queryLower.length === 0 || "everyone".startsWith(queryLower));
 
   const filtered = members.filter(
     (m) =>

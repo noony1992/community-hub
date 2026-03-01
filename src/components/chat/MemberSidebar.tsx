@@ -74,25 +74,37 @@ const MemberSidebar = ({ forceVisible = false }: { forceVisible?: boolean }) => 
   const showingSkeleton = !!activeServerId && loadingMembers;
   const revealMembers = useLoadingReveal(showingSkeleton);
 
-  const offlineMembers = members
-    .filter((member) => member.status === "offline")
-    .sort((a, b) => a.display_name.localeCompare(b.display_name));
+  const offlineMembers = useMemo(
+    () =>
+      members
+        .filter((member) => member.status === "offline")
+        .sort((a, b) => a.display_name.localeCompare(b.display_name)),
+    [members],
+  );
 
-  const groupedByRole = members
-    .filter((member) => member.status !== "offline")
-    .reduce<Record<string, typeof members>>((acc, member) => {
-    const key = (member.server_role || "member").trim();
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(member);
-    return acc;
-  }, {});
+  const groupedByRole = useMemo(
+    () =>
+      members
+        .filter((member) => member.status !== "offline")
+        .reduce<Record<string, typeof members>>((acc, member) => {
+          const key = (member.server_role || "member").trim();
+          if (!acc[key]) acc[key] = [];
+          acc[key].push(member);
+          return acc;
+        }, {}),
+    [members],
+  );
 
-  const orderedRoleGroups = Object.entries(groupedByRole).sort(([roleA, membersA], [roleB, membersB]) => {
-    const posA = membersA[0]?.role_position ?? -9999;
-    const posB = membersB[0]?.role_position ?? -9999;
-    if (posA !== posB) return posB - posA;
-    return roleA.localeCompare(roleB);
-  });
+  const orderedRoleGroups = useMemo(
+    () =>
+      Object.entries(groupedByRole).sort(([roleA, membersA], [roleB, membersB]) => {
+        const posA = membersA[0]?.role_position ?? -9999;
+        const posB = membersB[0]?.role_position ?? -9999;
+        if (posA !== posB) return posB - posA;
+        return roleA.localeCompare(roleB);
+      }),
+    [groupedByRole],
+  );
 
   const handleUserClick = (user: SidebarMember, e: React.MouseEvent) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -105,7 +117,7 @@ const MemberSidebar = ({ forceVisible = false }: { forceVisible?: boolean }) => 
     setVisibleOfflineCount(120);
   }, [activeServerId]);
 
-  const totalOnlineMembers = members.length - offlineMembers.length;
+  const totalOnlineMembers = useMemo(() => members.length - offlineMembers.length, [members.length, offlineMembers.length]);
   const visibleRoleGroups = useMemo(() => {
     let remaining = visibleOnlineCount;
     return orderedRoleGroups
@@ -120,7 +132,7 @@ const MemberSidebar = ({ forceVisible = false }: { forceVisible?: boolean }) => 
       })
       .filter((group) => group.members.length > 0);
   }, [orderedRoleGroups, visibleOnlineCount]);
-  const visibleOfflineMembers = offlineMembers.slice(0, visibleOfflineCount);
+  const visibleOfflineMembers = useMemo(() => offlineMembers.slice(0, visibleOfflineCount), [offlineMembers, visibleOfflineCount]);
 
   return (
     <div

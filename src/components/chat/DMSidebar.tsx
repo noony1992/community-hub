@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useDMContext } from "@/context/DMContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/AuthContext";
@@ -15,6 +15,15 @@ type DMSidebarProps = {
   onNavigate?: () => void;
 };
 
+type SearchProfile = {
+  id: string;
+  username: string;
+  display_name: string;
+  avatar_url: string | null;
+  status: string;
+  updated_at: string | null;
+};
+
 const DMSidebar = ({ embedded = false, onNavigate }: DMSidebarProps) => {
   const { user } = useAuth();
   const {
@@ -24,11 +33,14 @@ const DMSidebar = ({ embedded = false, onNavigate }: DMSidebarProps) => {
     startConversation,
     isFriendsView,
     setIsFriendsView,
+    dmUnreadCountByConversation,
+    pendingFriendRequestCount,
     loadingConversations,
   } = useDMContext();
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchResults, setSearchResults] = useState<SearchProfile[]>([]);
   const [searching, setSearching] = useState(false);
+  const searchRequestSeqRef = useRef(0);
   const showingSkeleton = loadingConversations && conversations.length === 0 && !searchQuery;
   const revealConversations = useLoadingReveal(showingSkeleton);
 
@@ -36,28 +48,39 @@ const DMSidebar = ({ embedded = false, onNavigate }: DMSidebarProps) => {
     return <DMSidebarSkeleton embedded={embedded} />;
   }
 
-  const handleSearch = async (query: string) => {
-    setSearchQuery(query);
-    if (!query.trim() || !user) {
+  useEffect(() => {
+    const query = searchQuery.trim();
+    if (!query || !user?.id) {
       setSearchResults([]);
+      setSearching(false);
       return;
     }
+
+    const requestSeq = ++searchRequestSeqRef.current;
     setSearching(true);
-    const { data } = await supabase
-      .from("profiles")
-      .select("*")
-      .neq("id", user.id)
-      .or(`username.ilike.%${query}%,display_name.ilike.%${query}%`)
-      .limit(10);
-    setSearchResults(data || []);
-    setSearching(false);
-  };
+    const timerId = window.setTimeout(async () => {
+      const { data } = await supabase
+        .from("profiles")
+        .select("id, username, display_name, avatar_url, status, updated_at")
+        .neq("id", user.id)
+        .or(`username.ilike.%${query}%,display_name.ilike.%${query}%`)
+        .limit(10);
+      if (requestSeq !== searchRequestSeqRef.current) return;
+      setSearchResults((data || []) as SearchProfile[]);
+      setSearching(false);
+    }, 220);
+
+    return () => {
+      window.clearTimeout(timerId);
+    };
+  }, [searchQuery, user?.id]);
 
   const handleStartDM = async (userId: string) => {
     await startConversation(userId);
     setIsFriendsView(false);
     setSearchQuery("");
     setSearchResults([]);
+    setSearching(false);
     onNavigate?.();
   };
 
@@ -77,12 +100,12 @@ const DMSidebar = ({ embedded = false, onNavigate }: DMSidebarProps) => {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <input
             value={searchQuery}
-            onChange={(e) => handleSearch(e.target.value)}
+            onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Find or start a conversation"
             className="w-full pl-8 pr-8 py-1.5 rounded-md bg-background text-sm text-foreground placeholder:text-muted-foreground outline-none border border-border focus:ring-1 focus:ring-primary/50"
           />
           {searchQuery && (
-            <button onClick={() => { setSearchQuery(""); setSearchResults([]); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+            <button onClick={() => { searchRequestSeqRef.current += 1; setSearchQuery(""); setSearchResults([]); setSearching(false); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
               <X className="w-3.5 h-3.5" />
             </button>
           )}
@@ -165,7 +188,14 @@ const DMSidebar = ({ embedded = false, onNavigate }: DMSidebarProps) => {
               </span>
             </span>
           </span>
-          <ChevronRight className={`w-4 h-4 shrink-0 transition-transform ${isFriendsView ? "rotate-90" : ""}`} />
+          <span className="flex items-center gap-2 shrink-0">
+            {pendingFriendRequestCount > 0 && (
+              <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-semibold flex items-center justify-center">
+                {pendingFriendRequestCount > 99 ? "99+" : pendingFriendRequestCount}
+              </span>
+            )}
+            <ChevronRight className={`w-4 h-4 transition-transform ${isFriendsView ? "rotate-90" : ""}`} />
+          </span>
         </button>
       </div>
 
@@ -176,6 +206,7 @@ const DMSidebar = ({ embedded = false, onNavigate }: DMSidebarProps) => {
         {conversations.map((conv) => {
           const isActive = conv.id === activeConversationId;
           const p = conv.participant;
+          const unreadCount = dmUnreadCountByConversation[conv.id] || 0;
           const initials = p.display_name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
 
           return (
@@ -205,7 +236,14 @@ const DMSidebar = ({ embedded = false, onNavigate }: DMSidebarProps) => {
                 )}
                 <StatusIndicator status={getEffectiveStatus(p.status, p.updated_at)} className="absolute -bottom-0.5 -right-0.5" />
               </div>
-              <span className="truncate">{p.display_name}</span>
+              <span className={`truncate ${unreadCount > 0 && !isActive ? "font-semibold text-foreground" : ""}`}>
+                {p.display_name}
+              </span>
+              {unreadCount > 0 && !isActive && (
+                <span className="ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold flex items-center justify-center shrink-0">
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
+              )}
             </button>
           );
         })}

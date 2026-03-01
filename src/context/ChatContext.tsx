@@ -168,6 +168,8 @@ interface ChatState {
   markChannelAsRead: (channelId?: string) => Promise<void>;
 }
 
+const containsEveryoneMention = (value: string) => /(^|[^\w])@everyone\b/i.test(value);
+
 const ChatContext = createContext<ChatState | null>(null);
 
 export const useChatContext = () => {
@@ -1458,7 +1460,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoadingMessages(true);
       return id;
     });
-  }, []);
+
+    // Opening a channel should clear its unread badge immediately.
+    setUnreadCountByChannel((prev) => {
+      if (!prev[id]) return prev;
+      return { ...prev, [id]: 0 };
+    });
+    void markChannelAsRead(id);
+  }, [markChannelAsRead]);
 
   const processScheduledMessages = useCallback(async () => {
     if (!user) return;
@@ -1670,6 +1679,17 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const scheduledContent = payload.isAnnouncement ? encodeAnnouncement(payload.content) : payload.content;
+    const activeServer = servers.find((s) => s.id === activeServerId);
+    const isServerOwner = !!activeServer && activeServer.owner_id === user.id;
+    const currentMember = membersRef.current.find((m) => m.id === user.id);
+    const canScheduleMessages = isServerOwner || (currentMember?.role_permissions || []).includes("schedule_messages");
+    if (!canScheduleMessages) {
+      return { ok: false, error: "You don't have permission to schedule messages." };
+    }
+    const canUseEveryoneMention = isServerOwner || (currentMember?.role_permissions || []).includes("mention_everyone");
+    if (!canUseEveryoneMention && containsEveryoneMention(scheduledContent)) {
+      return { ok: false, error: "You don't have permission to use @everyone." };
+    }
     const { error } = await (supabase as any)
       .from("scheduled_messages")
       .insert({
@@ -1686,7 +1706,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { ok: false, error: error.message };
     }
     return { ok: true };
-  }, [activeChannelId, activeServerId, user]);
+  }, [activeChannelId, activeServerId, servers, user]);
 
   const sendMessage = useCallback(async (content: string, attachment?: { url: string; name: string; type: string }, replyTo?: string) => {
     if (!user || !activeChannelId) return;
@@ -1707,6 +1727,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const serverId = channel?.server_id || activeServerId;
     if (!serverId) {
       toast.error("Unable to resolve active server for this message.");
+      return;
+    }
+    const activeServer = servers.find((s) => s.id === serverId);
+    const isServerOwner = !!activeServer && activeServer.owner_id === user.id;
+    const currentMember = membersRef.current.find((m) => m.id === user.id);
+    const canUseEveryoneMention = isServerOwner || (currentMember?.role_permissions || []).includes("mention_everyone");
+    if (!canUseEveryoneMention && containsEveryoneMention(content)) {
+      toast.error("You don't have permission to use @everyone.");
       return;
     }
     const { data: automodResult, error: automodError } = await (supabase as any).rpc("evaluate_automod_message", {
@@ -1904,7 +1932,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         requestId,
       });
     }
-  }, [user, activeChannelId, channels, activeServerId, moderationState, followedThreadIds, createMessageNotifications, notifyThreadSubscribers, fetchModerationState]);
+  }, [user, activeChannelId, channels, servers, activeServerId, moderationState, followedThreadIds, createMessageNotifications, notifyThreadSubscribers, fetchModerationState]);
 
   const isThreadFollowed = useCallback((parentMessageId: string) => followedThreadIds.has(parentMessageId), [followedThreadIds]);
 

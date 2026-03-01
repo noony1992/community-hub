@@ -14,7 +14,7 @@ type ServerSidebarProps = {
 
 const ServerSidebar = ({ mode = "rail", onNavigate }: ServerSidebarProps) => {
   const { servers, activeServerId, setActiveServer, createServer, loadingServers } = useChatContext();
-  const { isDMMode, setIsDMMode, setActiveConversation } = useDMContext();
+  const { isDMMode, setIsDMMode, setActiveConversation, totalDmUnreadCount, pendingFriendRequestCount } = useDMContext();
   const navigate = useNavigate();
   const location = useLocation();
   const [showCreate, setShowCreate] = useState(false);
@@ -23,6 +23,7 @@ const ServerSidebar = ({ mode = "rail", onNavigate }: ServerSidebarProps) => {
   const isSheet = mode === "sheet";
   const isDiscoverRoute = location.pathname.startsWith("/discover");
   const isDMActive = isDMMode && !isDiscoverRoute;
+  const totalDmIndicatorCount = totalDmUnreadCount + pendingFriendRequestCount;
   const revealServers = useLoadingReveal(loadingServers);
 
   const handleCreate = async () => {
@@ -70,9 +71,14 @@ const ServerSidebar = ({ mode = "rail", onNavigate }: ServerSidebarProps) => {
               isDMActive ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground hover:opacity-90"
             }`}
           >
-            <span className="inline-flex items-center gap-2">
+            <span className="inline-flex items-center gap-2 w-full">
               <MessageCircle className="h-4 w-4" />
               Direct Messages
+              {totalDmIndicatorCount > 0 && (
+                <span className="ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-semibold inline-flex items-center justify-center">
+                  {totalDmIndicatorCount > 99 ? "99+" : totalDmIndicatorCount}
+                </span>
+              )}
             </span>
           </button>
 
@@ -190,12 +196,17 @@ const ServerSidebar = ({ mode = "rail", onNavigate }: ServerSidebarProps) => {
     <div className="relative flex flex-col items-center w-[72px] bg-server-bar py-3 gap-2 overflow-y-auto shrink-0">
       <button
         onClick={handleOpenDMs}
-        className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-200 ${
+        className={`relative w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-200 ${
           isDMActive ? "rounded-xl bg-primary text-primary-foreground" : "bg-chat-area text-foreground hover:rounded-xl hover:bg-primary hover:text-primary-foreground"
         }`}
         title="Direct Messages"
       >
         <MessageCircle className="w-6 h-6" />
+        {totalDmIndicatorCount > 0 && (
+          <span className="absolute top-2 right-2 min-w-[16px] h-[16px] px-1 rounded-full bg-destructive text-destructive-foreground text-[9px] font-semibold flex items-center justify-center">
+            {totalDmIndicatorCount > 99 ? "99+" : totalDmIndicatorCount}
+          </span>
+        )}
       </button>
 
       <div className="w-8 h-[2px] bg-border rounded-full" />

@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useChatContext } from "@/context/ChatContext";
-import { Hash, Volume2, ChevronDown, Settings, UserPlus, LogOut, MessageSquare } from "lucide-react";
+import { Hash, Volume2, ChevronDown, Settings, UserPlus, LogOut, MessageSquare, CalendarDays } from "lucide-react";
 import InviteDialog from "./InviteDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/AuthContext";
@@ -33,6 +33,7 @@ type ChannelSidebarProps = {
 
 const ChannelSidebar = ({ embedded = false, onNavigate }: ChannelSidebarProps) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const { activeServerId, activeChannelId, setActiveChannel, channels, channelGroups, servers, members, refreshServers, unreadCountByChannel, loadingChannels } = useChatContext();
   const {
@@ -166,6 +167,18 @@ const ChannelSidebar = ({ embedded = false, onNavigate }: ChannelSidebarProps) =
               <span>Server Settings</span>
             </DropdownMenuItem>
           )}
+          <DropdownMenuItem
+            onClick={() => {
+              const params = new URLSearchParams(location.search);
+              params.set("events", "1");
+              navigate(`${location.pathname}?${params.toString()}`);
+              onNavigate?.();
+            }}
+            className="flex items-center gap-2 cursor-pointer"
+          >
+            <CalendarDays className="w-4 h-4" />
+            <span>Events Calendar</span>
+          </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setShowInvite(true)} className="flex items-center gap-2 cursor-pointer">
             <UserPlus className="w-4 h-4" />
             <span>Invite People</span>

@@ -2,7 +2,7 @@ import { Fragment, useState, useRef, useEffect, useLayoutEffect, useMemo, useCal
 import { useChatContext, type Message } from "@/context/ChatContext";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { Hash, Pin, Users, Search, Inbox, HelpCircle, PlusCircle, Gift, Smile, SendHorizonal, Pencil, Trash2, X, Check, Paperclip, FileIcon, ImageIcon, MessageSquare, Reply, Volume2, PhoneOff, CalendarClock, Megaphone, BarChart3, CalendarDays, MicOff, UserX, Video, VideoOff, ScreenShare, ScreenShareOff, Maximize2, PanelLeft, Menu } from "lucide-react";
+import { Hash, Pin, Users, Search, Inbox, HelpCircle, PlusCircle, Gift, Smile, SendHorizonal, Pencil, Trash2, X, Check, Paperclip, FileIcon, ImageIcon, MessageSquare, Reply, Volume2, PhoneOff, CalendarClock, Megaphone, BarChart3, MicOff, UserX, Video, VideoOff, ScreenShare, ScreenShareOff, Maximize2, PanelLeft, Menu } from "lucide-react";
 import { format, isSameDay, isToday, isYesterday } from "date-fns";
 import { toast } from "sonner";
 import EmojiPicker from "./EmojiPicker";
@@ -132,6 +132,7 @@ const ChatArea = ({
   const [timeoutAppealReason, setTimeoutAppealReason] = useState("");
   const [timeoutAppealError, setTimeoutAppealError] = useState<string | null>(null);
   const [showEventsModal, setShowEventsModal] = useState(false);
+  const [showCreateEventModal, setShowCreateEventModal] = useState(false);
   const [events, setEvents] = useState<ServerEvent[]>([]);
   const [eventRsvps, setEventRsvps] = useState<EventRsvp[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(false);
@@ -227,6 +228,11 @@ const ChatArea = ({
   const currentMember = members.find((m) => m.id === user?.id);
   const currentPermissions = currentMember?.role_permissions || [];
   const canManageChannels = currentPermissions.includes("manage_channels") || isServerOwner;
+  const canManageQaMode = canManageChannels || isServerOwner;
+  const canScheduleMessages = currentPermissions.includes("schedule_messages") || isServerOwner;
+  const canCreatePolls = currentPermissions.includes("create_polls") || isServerOwner;
+  const canCreateQa = currentPermissions.includes("create_qa") || isServerOwner;
+  const canUseEveryoneMention = currentPermissions.includes("mention_everyone") || isServerOwner;
   const canCreateEvents = currentPermissions.includes("events") || isServerOwner;
   const canPinMessages = currentPermissions.includes("pin_messages") || isServerOwner;
   const canDeleteAnyMessages = currentPermissions.includes("delete_messages") || isServerOwner;
@@ -417,6 +423,7 @@ const ChatArea = ({
     setEventLocation("");
     setEventStartsAt("");
     setEventEndsAt("");
+    setShowCreateEventModal(false);
     await notifyEventCreated(createdEvent);
     toast.success("Event created.");
   }, [activeServerId, user, canCreateEvents, eventTitle, eventStartsAt, eventEndsAt, eventDescription, eventLocation, notifyEventCreated]);
@@ -470,6 +477,15 @@ const ChatArea = ({
   }, [loadEvents, showEventsModal]);
 
   useEffect(() => {
+    if (searchParams.get("events") !== "1") return;
+    setLoadingEvents(true);
+    setShowEventsModal(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete("events");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
     if (!activeChannelId) {
       setQaModeEnabled(false);
       return;
@@ -485,9 +501,17 @@ const ChatArea = ({
     void loadQaMode();
   }, [activeChannelId]);
 
+  const parsedMessageById = useMemo(() => {
+    const next: Record<string, ReturnType<typeof parseMessageFeatures>> = {};
+    messages.forEach((msg) => {
+      next[msg.id] = parseMessageFeatures(msg.content);
+    });
+    return next;
+  }, [messages]);
+
   const pollMessageIds = useMemo(
-    () => messages.filter((m) => parseMessageFeatures(m.content).kind === "poll").map((m) => m.id),
-    [messages],
+    () => messages.filter((m) => parsedMessageById[m.id]?.kind === "poll").map((m) => m.id),
+    [messages, parsedMessageById],
   );
 
   const loadVotesForMessage = useCallback(async (messageId: string) => {
@@ -857,8 +881,20 @@ const ChatArea = ({
     }
     const trimmed = input.trim();
     if (!trimmed && !pendingAttachment) return;
+    if (!canUseEveryoneMention && /(^|[^\w])@everyone\b/i.test(trimmed)) {
+      toast.error("You don't have permission to use @everyone.");
+      return;
+    }
     if (qaModeEnabled && !replyTo && !asQuestion) {
       toast.error("Q&A mode is enabled. Mark your message as a question or reply within a thread.");
+      return;
+    }
+    if (asQuestion && !canCreateQa) {
+      toast.error("You don't have permission to create Q&A messages.");
+      return;
+    }
+    if (qaModeEnabled && !replyTo && !canCreateQa) {
+      toast.error("Q&A mode is enabled, but your role cannot create Q&A messages.");
       return;
     }
     setInput("");
@@ -874,7 +910,7 @@ const ChatArea = ({
   };
 
   const toggleQaMode = async () => {
-    if (!activeChannelId || !canManageChannels || togglingQaMode || !user) return;
+    if (!activeChannelId || !canManageQaMode || togglingQaMode || !user) return;
     setTogglingQaMode(true);
     const { error } = await (supabase as any)
       .from("channel_features")
@@ -893,6 +929,10 @@ const ChatArea = ({
   };
 
   const handleScheduleCurrentMessage = async () => {
+    if (!canScheduleMessages) {
+      toast.error("You don't have permission to schedule messages.");
+      return;
+    }
     const trimmed = input.trim();
     if (!trimmed) return;
     if (!scheduleAt) {
@@ -921,6 +961,10 @@ const ChatArea = ({
   };
 
   const handleCreatePoll = async () => {
+    if (!canCreatePolls) {
+      toast.error("You don't have permission to create polls.");
+      return;
+    }
     const question = pollQuestion.trim();
     const options = pollOptions.map((opt) => opt.trim()).filter(Boolean);
     if (!question || options.length < 2) {
@@ -1100,14 +1144,14 @@ const ChatArea = ({
   }, []);
 
   const getMessageBodyText = useCallback((msg: Message) => {
-    const parsed = parseMessageFeatures(msg.content);
+    const parsed = parsedMessageById[msg.id] || parseMessageFeatures(msg.content);
     if (parsed.kind === "poll") return parsed.poll.question;
     if (parsed.kind === "forum_topic") return `${parsed.topic.title} ${parsed.topic.body}`.trim();
     return parsed.text;
-  }, []);
+  }, [parsedMessageById]);
 
   const getForumTopic = useCallback((msg: Message): ForumTopicDefinition => {
-    const parsed = parseMessageFeatures(msg.content);
+    const parsed = parsedMessageById[msg.id] || parseMessageFeatures(msg.content);
     if (parsed.kind === "forum_topic") {
       return {
         title: parsed.topic.title,
@@ -1120,7 +1164,7 @@ const ChatArea = ({
       title: firstLine.slice(0, 120),
       body: fallbackText.trim() || firstLine,
     };
-  }, []);
+  }, [parsedMessageById]);
 
   const threadRepliesByParent = useMemo(() => {
     const map: Record<string, Message[]> = {};
@@ -1238,7 +1282,7 @@ const ChatArea = ({
   };
 
   const renderPollCard = (msg: Message) => {
-    const parsed = parseMessageFeatures(msg.content);
+    const parsed = parsedMessageById[msg.id] || parseMessageFeatures(msg.content);
     if (parsed.kind !== "poll") return null;
     const poll = parsed.poll;
     const votes = pollVotesByMessage[msg.id] || {};
@@ -2144,16 +2188,6 @@ const ChatArea = ({
             )}
           </div>
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            <button
-              onClick={() => {
-                setLoadingEvents(true);
-                setShowEventsModal(true);
-              }}
-              className="text-muted-foreground hover:text-foreground transition-colors"
-              title="Events Calendar"
-            >
-              <CalendarDays className="w-5 h-5" />
-            </button>
             <button onClick={() => setShowPinned(true)} className="text-muted-foreground hover:text-foreground transition-colors" title="Pinned Messages"><Pin className="w-5 h-5" /></button>
             <button
               onClick={() => {
@@ -2176,7 +2210,7 @@ const ChatArea = ({
             >
               <Inbox className="w-5 h-5" />
             </button>
-            {canManageChannels && channel?.type === "text" && (
+            {canManageQaMode && channel?.type === "text" && (
               <button
                 onClick={() => void toggleQaMode()}
                 disabled={togglingQaMode}
@@ -2222,7 +2256,7 @@ const ChatArea = ({
             const isOwn = msg.user_id === user?.id;
             const isEditing = editingId === msg.id;
             const isBannedTombstone = msg.content === "User Banned";
-            const parsedMessage = parseMessageFeatures(msg.content);
+            const parsedMessage = parsedMessageById[msg.id] || parseMessageFeatures(msg.content);
             const showDateDivider = !prevMsg || !isSameDay(new Date(msg.created_at), new Date(prevMsg.created_at));
             const isGrouped = !isBannedTombstone &&
               !showDateDivider &&
@@ -2462,6 +2496,7 @@ const ChatArea = ({
               members={members}
               onSelect={handleMentionSelect}
               visible={showMentions}
+              allowEveryone={canUseEveryoneMention}
             />
             <div className="flex items-center gap-2 bg-chat-input rounded-lg px-4 py-2.5">
               <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
@@ -2495,7 +2530,7 @@ const ChatArea = ({
               <div className="flex items-center gap-2 shrink-0">
                 <button
                   onClick={() => setShowScheduleModal(true)}
-                  disabled={!input.trim()}
+                  disabled={!canScheduleMessages || !input.trim()}
                   className="text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors"
                   title="Schedule message"
                 >
@@ -2503,7 +2538,7 @@ const ChatArea = ({
                 </button>
                 <button
                   onClick={() => setShowPollModal(true)}
-                  disabled={qaModeEnabled && !replyTo}
+                  disabled={!canCreatePolls || (qaModeEnabled && !replyTo)}
                   className="text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors"
                   title="Create poll"
                 >
@@ -2518,7 +2553,7 @@ const ChatArea = ({
                 </button>
               </div>
             </div>
-            {(qaModeEnabled || asQuestion) && !replyTo && (
+            {(qaModeEnabled || asQuestion) && !replyTo && canCreateQa && (
               <label className="mt-2 inline-flex items-center gap-2 text-xs text-muted-foreground">
                 <input
                   type="checkbox"
@@ -2774,62 +2809,16 @@ const ChatArea = ({
               <DialogTitle>Events Calendar</DialogTitle>
             </DialogHeader>
             <div className="flex-1 min-h-0 space-y-4 overflow-hidden">
-              <div className="rounded-md border border-border/60 bg-secondary/20 p-3 space-y-2">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Create Event</p>
-                {!canCreateEvents && (
-                  <p className="text-sm text-muted-foreground">
-                    You need the <span className="text-foreground font-medium">events</span> permission to create events.
-                  </p>
-                )}
-                {canCreateEvents && (
-                  <>
-                    <input
-                      value={eventTitle}
-                      onChange={(e) => setEventTitle(e.target.value)}
-                      placeholder="Event title"
-                      className="w-full rounded-md bg-background border border-border px-3 py-2 text-sm"
-                    />
-                    <textarea
-                      value={eventDescription}
-                      onChange={(e) => setEventDescription(e.target.value)}
-                      placeholder="Description (optional)"
-                      rows={3}
-                      className="w-full rounded-md bg-background border border-border px-3 py-2 text-sm resize-y"
-                    />
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <input
-                        value={eventLocation}
-                        onChange={(e) => setEventLocation(e.target.value)}
-                        placeholder="Location / voice channel / external link"
-                        className="w-full rounded-md bg-background border border-border px-3 py-2 text-sm"
-                      />
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <input
-                          type="datetime-local"
-                          value={eventStartsAt}
-                          onChange={(e) => setEventStartsAt(e.target.value)}
-                          className="w-full rounded-md bg-background border border-border px-3 py-2 text-sm"
-                        />
-                        <input
-                          type="datetime-local"
-                          value={eventEndsAt}
-                          onChange={(e) => setEventEndsAt(e.target.value)}
-                          className="w-full rounded-md bg-background border border-border px-3 py-2 text-sm"
-                        />
-                      </div>
-                    </div>
-                    <div className="flex justify-end">
-                      <button
-                        onClick={() => void createEvent()}
-                        disabled={creatingEvent || !eventTitle.trim() || !eventStartsAt}
-                        className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm disabled:opacity-50"
-                      >
-                        {creatingEvent ? "Creating..." : "Create Event"}
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
+              {canCreateEvents && (
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => setShowCreateEventModal(true)}
+                    className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm"
+                  >
+                    Create Event
+                  </button>
+                </div>
+              )}
 
               <div className="flex-1 min-h-0 rounded-md border border-border/60 bg-background/70 p-3 overflow-y-auto space-y-3">
                 <div className="flex items-center justify-between">
@@ -2949,6 +2938,65 @@ const ChatArea = ({
                     ))}
                   </div>
                 )}
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={showCreateEventModal} onOpenChange={setShowCreateEventModal}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Create Event</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <input
+                value={eventTitle}
+                onChange={(e) => setEventTitle(e.target.value)}
+                placeholder="Event title"
+                className="w-full rounded-md bg-background border border-border px-3 py-2 text-sm"
+              />
+              <textarea
+                value={eventDescription}
+                onChange={(e) => setEventDescription(e.target.value)}
+                placeholder="Description (optional)"
+                rows={3}
+                className="w-full rounded-md bg-background border border-border px-3 py-2 text-sm resize-y"
+              />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <input
+                  value={eventLocation}
+                  onChange={(e) => setEventLocation(e.target.value)}
+                  placeholder="Location / voice channel / external link"
+                  className="w-full rounded-md bg-background border border-border px-3 py-2 text-sm"
+                />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input
+                    type="datetime-local"
+                    value={eventStartsAt}
+                    onChange={(e) => setEventStartsAt(e.target.value)}
+                    className="w-full rounded-md bg-background border border-border px-3 py-2 text-sm"
+                  />
+                  <input
+                    type="datetime-local"
+                    value={eventEndsAt}
+                    onChange={(e) => setEventEndsAt(e.target.value)}
+                    className="w-full rounded-md bg-background border border-border px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setShowCreateEventModal(false)}
+                  className="px-3 py-1.5 rounded-md bg-secondary text-secondary-foreground text-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void createEvent()}
+                  disabled={creatingEvent || !eventTitle.trim() || !eventStartsAt}
+                  className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm disabled:opacity-50"
+                >
+                  {creatingEvent ? "Creating..." : "Create Event"}
+                </button>
               </div>
             </div>
           </DialogContent>

@@ -6,6 +6,7 @@ import { AtSign, PlusCircle, Gift, Smile, SendHorizonal, PanelLeft, Menu } from 
 import { format, isSameDay, isToday, isYesterday } from "date-fns";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 import StatusIndicator from "./StatusIndicator";
 import { getEffectiveStatus } from "@/lib/presence";
 import { DMAreaSkeleton } from "@/components/skeletons/AppSkeletons";
@@ -41,10 +42,24 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
   const navigate = useNavigate();
   const { user } = useAuth();
   const { profile: chatProfile } = useChatContext();
-  const { activeConversationId, conversations, dmMessages, sendDM, startConversation, isFriendsView, loadingDmMessages, loadingConversations } = useDMContext();
+  const {
+    activeConversationId,
+    conversations,
+    dmMessages,
+    sendDM,
+    startConversation,
+    isFriendsView,
+    pendingFriendRequests,
+    acceptFriendRequest,
+    denyFriendRequest,
+    blockFriendRequest,
+    loadingDmMessages,
+    loadingConversations,
+  } = useDMContext();
   const [input, setInput] = useState("");
   const [friends, setFriends] = useState<FriendItem[]>([]);
   const [loadingFriends, setLoadingFriends] = useState(false);
+  const [friendRequestActionId, setFriendRequestActionId] = useState<string | null>(null);
   const [profileUser, setProfileUser] = useState<DMDisplayUser | null>(null);
   const [profilePos, setProfilePos] = useState<{ top: number; left: number } | undefined>();
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -254,6 +269,39 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
     await startConversation(friendId);
   };
 
+  const handleAcceptFriendRequest = async (friendshipId: string, requesterId: string) => {
+    setFriendRequestActionId(friendshipId);
+    try {
+      await acceptFriendRequest(friendshipId, requesterId);
+    } catch (error) {
+      toast.error(`Failed to accept request: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setFriendRequestActionId(null);
+    }
+  };
+
+  const handleDenyFriendRequest = async (friendshipId: string, requesterId: string) => {
+    setFriendRequestActionId(friendshipId);
+    try {
+      await denyFriendRequest(friendshipId, requesterId);
+    } catch (error) {
+      toast.error(`Failed to deny request: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setFriendRequestActionId(null);
+    }
+  };
+
+  const handleBlockFriendRequest = async (friendshipId: string, requesterId: string) => {
+    setFriendRequestActionId(friendshipId);
+    try {
+      await blockFriendRequest(friendshipId, requesterId);
+    } catch (error) {
+      toast.error(`Failed to block user: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setFriendRequestActionId(null);
+    }
+  };
+
   const handleMessagesScroll = useCallback(() => {
     if (!activeConversationId || isFriendsView) return;
     const el = messagesContainerRef.current;
@@ -300,6 +348,68 @@ const DMArea = ({ isMobile = false, onOpenServers, onOpenConversations }: DMArea
       <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="flex-1 overflow-y-auto px-3 py-3 space-y-1">
         {isFriendsView && (
           <div className={`space-y-2 ${!loadingFriends && revealFriends ? "animate-in fade-in-0 duration-200 ease-out" : ""}`}>
+            {pendingFriendRequests.length > 0 && (
+              <div className="rounded-md border border-border/60 bg-card/40 p-3 space-y-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Pending Friend Requests ({pendingFriendRequests.length})
+                </p>
+                {pendingFriendRequests.map((request) => {
+                  const requester = request.requester;
+                  const busy = friendRequestActionId === request.id;
+                  const initials = requester.display_name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+                  return (
+                    <div key={request.id} className="flex items-center justify-between gap-3 px-2 py-2 rounded-md bg-secondary/30 border border-border/50">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="relative shrink-0">
+                          {requester.avatar_url ? (
+                            <img src={requester.avatar_url} alt={requester.display_name} className="w-8 h-8 rounded-full object-cover" />
+                          ) : (
+                            <div
+                              className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-foreground"
+                              style={{ backgroundColor: `hsl(${(requester.id.charCodeAt(1) || 0) * 60 % 360}, 50%, 35%)` }}
+                            >
+                              {initials}
+                            </div>
+                          )}
+                          <StatusIndicator status={getEffectiveStatus(requester.status, requester.updated_at)} className="absolute -bottom-0.5 -right-0.5" />
+                        </div>
+                        <button
+                          onClick={() => navigate(`/profile/${requester.id}`)}
+                          className="text-left min-w-0 hover:underline"
+                          title={`View ${requester.display_name}'s profile`}
+                        >
+                          <p className="text-sm text-foreground truncate">{requester.display_name}</p>
+                          <p className="text-xs text-muted-foreground truncate">@{requester.username}</p>
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          disabled={busy}
+                          onClick={() => void handleAcceptFriendRequest(request.id, requester.id)}
+                          className="px-2 py-1 rounded-md bg-primary text-primary-foreground text-[11px] font-medium disabled:opacity-50"
+                        >
+                          Accept
+                        </button>
+                        <button
+                          disabled={busy}
+                          onClick={() => void handleDenyFriendRequest(request.id, requester.id)}
+                          className="px-2 py-1 rounded-md bg-secondary text-secondary-foreground text-[11px] font-medium disabled:opacity-50"
+                        >
+                          Deny
+                        </button>
+                        <button
+                          disabled={busy}
+                          onClick={() => void handleBlockFriendRequest(request.id, requester.id)}
+                          className="px-2 py-1 rounded-md bg-destructive/10 text-destructive text-[11px] font-medium disabled:opacity-50"
+                        >
+                          Block
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             {loadingFriends && (
               <div className="space-y-3">
                 {Array.from({ length: 6 }).map((_, i) => (
